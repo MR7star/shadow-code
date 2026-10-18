@@ -1,0 +1,200 @@
+/* ═══════════════════════════════════════════════════════════════
+   Shadow Code Editor Styles
+   Dark Fantasy RPG Code Editor with Prism Syntax Highlighting
+   ═══════════════════════════════════════════════════════════════ */
+
+.code-editor-wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-deep);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5);
+  font-family: var(--font-mono);
+  transition: border-color var(--transition-fast);
+}
+
+.code-editor-wrapper:focus-within {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 1px var(--accent-primary-dim), 0 0 20px var(--accent-primary-subtle);
+}
+
+/* Editor Top Header */
+.code-editor-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.75rem;
+}
+
+.code-editor-lang-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent-cyan);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.code-editor-actions-mini {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-mini-btn {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.editor-mini-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+
+/* Main Code Editor Box */
+.code-editor-body {
+  position: relative;
+  display: flex;
+  min-height: 280px;
+  max-height: 480px;
+  height: 340px;
+  overflow: hidden;
+  background: #090810;
+}
+
+/* Line numbers */
+.code-editor-linenumbers {
+  padding: 16px 10px 16px 14px;
+  color: #4a4560;
+  text-align: right;
+  user-select: none;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  background: #090810;
+  border-right: 1px solid rgba(139, 92, 246, 0.08);
+  font-family: var(--font-mono);
+  min-width: 44px;
+}
+
+.code-editor-linenumbers div {
+  height: 1.55em;
+}
+
+/* Scrollable Container with Overlaid Layers */
+.code-editor-scroll {
+  position: relative;
+  flex: 1;
+  height: 100%;
+  overflow: auto;
+}
+
+/* Textarea input & Highlighted pre layer */
+.code-editor-textarea,
+.code-editor-highlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  padding: 16px 16px 32px 16px;
+  margin: 0;
+  border: none;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  line-height: 1.55;
+  tab-size: 4;
+  white-space: pre;
+  word-wrap: normal;
+  box-sizing: border-box;
+}
+
+.code-editor-textarea {
+  background: transparent;
+  color: transparent;
+  caret-color: #67e8f9;
+  resize: none;
+  outline: none;
+  z-index: 2;
+  overflow: auto;
+}
+
+.code-editor-highlight {
+  pointer-events: none;
+  z-index: 1;
+  background: transparent;
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+/* ─── Prism Syntax Highlighting Theme ────────────────────────── */
+.token.comment,
+.token.prolog,
+.token.doctype,
+.token.cdata {
+  color: #6b6580;
+  font-style: italic;
+}
+
+.token.punctuation {
+  color: #94a3b8;
+}
+
+.token.property,
+.token.tag,
+.token.boolean,
+.token.number,
+.token.constant,
+.token.symbol,
+.token.deleted {
+  color: #f59e0b;
+}
+
+.token.selector,
+.token.attr-name,
+.token.string,
+.token.char,
+.token.builtin,
+.token.inserted {
+  color: #34d399;
+}
+
+.token.operator,
+.token.entity,
+.token.url,
+.language-css .token.string,
+.style .token.string {
+  color: #22d3ee;
+}
+
+.token.atrule,
+.token.attr-value,
+.token.keyword {
+  color: #c084fc;
+  font-weight: 600;
+}
+
+.token.function,
+.token.class-name {
+  color: #60a5fa;
+  font-weight: 600;
+}
+
+.token.regex,
+.token.important,
+.token.variable {
+  color: #f43f5e;
+}
