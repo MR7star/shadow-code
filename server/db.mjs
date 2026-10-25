@@ -133,6 +133,45 @@ export function initDatabase() {
       expires_at TEXT NOT NULL
     );
 
+    -- Daily quests (generated once per day per user)
+    CREATE TABLE IF NOT EXISTS daily_quests (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      quest_date TEXT NOT NULL, -- YYYY-MM-DD in UTC
+      mission_type TEXT NOT NULL CHECK(mission_type IN ('main_challenge', 'practice_challenge', 'concept_mastery')),
+      target_id TEXT NOT NULL, -- challenge_id or concept_id
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      xp_reward INTEGER NOT NULL,
+      progress INTEGER NOT NULL DEFAULT 0,
+      target_progress INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL CHECK(status IN ('available', 'completed', 'claimed')),
+      created_at TEXT NOT NULL,
+      completed_at TEXT,
+      UNIQUE(user_id, quest_date, mission_type, target_id)
+    );
+
+    -- Streak tracking
+    CREATE TABLE IF NOT EXISTS streak_data (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      current_streak INTEGER NOT NULL DEFAULT 0,
+      longest_streak INTEGER NOT NULL DEFAULT 0,
+      last_activity_date TEXT, -- YYYY-MM-DD in UTC when qualifying activity occurred
+      updated_at TEXT NOT NULL
+    );
+
+    -- Reward chest state
+    CREATE TABLE IF NOT EXISTS reward_chests (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      quest_date TEXT NOT NULL, -- YYYY-MM-DD in UTC
+      total_xp_reward INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL CHECK(status IN ('locked', 'available', 'claimed')),
+      claimed_at TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE(user_id, quest_date)
+    );
+
     -- Indexes for fast query resolution
     CREATE INDEX IF NOT EXISTS idx_quest_progress_user ON quest_progress(user_id);
     CREATE INDEX IF NOT EXISTS idx_submissions_user ON submissions(user_id);
@@ -140,6 +179,8 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_xp_tx_user ON xp_transactions(user_id);
     CREATE INDEX IF NOT EXISTS idx_concept_mastery_user ON concept_mastery(user_id);
     CREATE INDEX IF NOT EXISTS idx_challenge_mastery_user ON challenge_mastery(user_id);
+    CREATE INDEX IF NOT EXISTS idx_daily_quests_user_date ON daily_quests(user_id, quest_date);
+    CREATE INDEX IF NOT EXISTS idx_reward_chests_user_date ON reward_chests(user_id, quest_date);
   `);
 
   seedDemoUserIfMissing();
@@ -395,4 +436,545 @@ export function hasMasteredPrerequisites(userId, challengeId, prerequisiteIds) {
   `).all(userId, ...prerequisiteIds);
   
   return mastered.length === prerequisiteIds.length;
+}
+
+/**
+ * Get current UTC date as YYYY-MM-DD string for daily reset
+ */
+export function getUtcDateString(date = new Date()) {
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Get or generate daily quests for a user for today
+ */
+export function getOrGenerateDailyQuests(userId) {
+  const today = getUtcDateString();
+  
+  // Check if daily quests already exist for today
+  const existing = db.prepare(`
+    SELECT * FROM daily_quests WHERE user_id = ? AND quest_date = ?
+  `).all(userId, today);
+  
+  if (existing.length > 0) {
+    return existing;
+  }
+  
+  // Generate new daily quests
+  return generateDailyQuests(userId, today);
+}
+
+/**
+ * Generate 3 daily missions for a user
+ * Types: main_challenge, practice_challenge, concept_mastery
+ */
+function generateDailyQuests(userId, dateStr) {
+  const now = new Date().toISOString();
+  const missions = [];
+  
+  // Get user's mastered challenges and available challenges
+  const masteredChallenges = db.prepare(`
+    SELECT challenge_id FROM challenge_mastery WHERE user_id = ?
+  `).all(userId).map(r => r.challenge_id);
+  
+  const masteredConcepts = db.prepare(`
+    SELECT concept_id FROM concept_mastery WHERE user_id = ? AND mastery_level > 0
+  `).all(userId).map(r => r.concept_id);
+  
+  // Get available main challenges (prerequisites met, not mastered)
+  const availableMainChallenges = getAvailableMainChallenges(userId, masteredChallenges);
+  
+  // Get available practice challenges (main challenge mastered, practice not mastered)
+  const availablePracticeChallenges = getAvailablePracticeChallenges(userId, masteredChallenges);
+  
+  // Get concepts that can be mastered (mastery_level < 5)
+  const availableConcepts = getAvailableConcepts(userId, masteredConcepts);
+  
+  // Mission 1: Complete a main challenge
+  if (availableMainChallenges.length > 0) {
+    const challenge = availableMainChallenges[Math.floor(Math.random() * availableMainChallenges.length)];
+    missions.push({
+      id: `dq_${userId}_${dateStr}_main_${challenge.id}`,
+      user_id: userId,
+      quest_date: dateStr,
+      mission_type: 'main_challenge',
+      target_id: challenge.id,
+      title: challenge.title,
+      description: `Complete the challenge: ${challenge.title}`,
+      xp_reward: 50,
+      progress: 0,
+      target_progress: 1,
+      status: 'available',
+      created_at: now,
+    });
+  }
+  
+  // Mission 2: Complete a practice challenge
+  if (availablePracticeChallenges.length > 0) {
+    const challenge = availablePracticeChallenges[Math.floor(Math.random() * availablePracticeChallenges.length)];
+    missions.push({
+      id: `dq_${userId}_${dateStr}_practice_${challenge.id}`,
+      user_id: userId,
+      quest_date: dateStr,
+      mission_type: 'practice_challenge',
+      target_id: challenge.id,
+      title: challenge.title,
+      description: `Complete the practice challenge: ${challenge.title}`,
+      xp_reward: 30,
+      progress: 0,
+      target_progress: 1,
+      status: 'available',
+      created_at: now,
+    });
+  }
+  
+  // Mission 3: Master a concept (increase mastery level)
+  if (availableConcepts.length > 0) {
+    const concept = availableConcepts[Math.floor(Math.random() * availableConcepts.length)];
+    missions.push({
+      id: `dq_${userId}_${dateStr}_concept_${concept.concept_id}`,
+      user_id: userId,
+      quest_date: dateStr,
+      mission_type: 'concept_mastery',
+      target_id: concept.concept_id,
+      title: `Master ${concept.concept_id}`,
+      description: `Increase your mastery of ${concept.concept_id} (current: ${concept.mastery_level}/5)`,
+      xp_reward: 40,
+      progress: 0,
+      target_progress: 1,
+      status: 'available',
+      created_at: now,
+    });
+  }
+  
+  // If we couldn't generate 3 missions, fill with fallback missions
+  while (missions.length < 3) {
+    const fallbackTypes = ['main_challenge', 'practice_challenge', 'concept_mastery'];
+    const fallbackType = fallbackTypes[missions.length % fallbackTypes.length];
+    let fallbackMission;
+    
+    if (fallbackType === 'main_challenge' && availableMainChallenges.length > 0) {
+      const challenge = availableMainChallenges[missions.length % availableMainChallenges.length];
+      fallbackMission = {
+        id: `dq_${userId}_${dateStr}_main_fallback_${missions.length}`,
+        user_id: userId,
+        quest_date: dateStr,
+        mission_type: 'main_challenge',
+        target_id: challenge.id,
+        title: challenge.title,
+        description: `Complete the challenge: ${challenge.title}`,
+        xp_reward: 50,
+        progress: 0,
+        target_progress: 1,
+        status: 'available',
+        created_at: now,
+      };
+    } else if (fallbackType === 'practice_challenge' && availablePracticeChallenges.length > 0) {
+      const challenge = availablePracticeChallenges[missions.length % availablePracticeChallenges.length];
+      fallbackMission = {
+        id: `dq_${userId}_${dateStr}_practice_fallback_${missions.length}`,
+        user_id: userId,
+        quest_date: dateStr,
+        mission_type: 'practice_challenge',
+        target_id: challenge.id,
+        title: challenge.title,
+        description: `Complete the practice challenge: ${challenge.title}`,
+        xp_reward: 30,
+        progress: 0,
+        target_progress: 1,
+        status: 'available',
+        created_at: now,
+      };
+    } else if (availableConcepts.length > 0) {
+      const concept = availableConcepts[missions.length % availableConcepts.length];
+      fallbackMission = {
+        id: `dq_${userId}_${dateStr}_concept_fallback_${missions.length}`,
+        user_id: userId,
+        quest_date: dateStr,
+        mission_type: 'concept_mastery',
+        target_id: concept.concept_id,
+        title: `Master ${concept.concept_id}`,
+        description: `Increase your mastery of ${concept.concept_id} (current: ${concept.mastery_level}/5)`,
+        xp_reward: 40,
+        progress: 0,
+        target_progress: 1,
+        status: 'available',
+        created_at: now,
+      };
+    } else {
+      // Ultimate fallback - generic mission
+      fallbackMission = {
+        id: `dq_${userId}_${dateStr}_fallback_${missions.length}`,
+        user_id: userId,
+        quest_date: dateStr,
+        mission_type: 'main_challenge',
+        target_id: 'py-01',
+        title: 'Daily Training',
+        description: 'Complete any challenge to train your skills',
+        xp_reward: 25,
+        progress: 0,
+        target_progress: 1,
+        status: 'available',
+        created_at: now,
+      };
+    }
+    
+    missions.push(fallbackMission);
+  }
+  
+  // Insert all missions
+  const insertMission = db.prepare(`
+    INSERT INTO daily_quests (id, user_id, quest_date, mission_type, target_id, title, description, xp_reward, progress, target_progress, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  
+  for (const mission of missions) {
+    insertMission.run(
+      mission.id, mission.user_id, mission.quest_date, mission.mission_type,
+      mission.target_id, mission.title, mission.description, mission.xp_reward,
+      mission.progress, mission.target_progress, mission.status, mission.created_at
+    );
+  }
+  
+  // Create reward chest for today
+  const totalXp = missions.reduce((sum, m) => sum + m.xp_reward, 0);
+  db.prepare(`
+    INSERT INTO reward_chests (id, user_id, quest_date, total_xp_reward, status, created_at)
+    VALUES (?, ?, ?, ?, 'locked', ?)
+  `).run(`rc_${userId}_${dateStr}`, userId, dateStr, totalXp, now);
+  
+  return missions;
+}
+
+/**
+ * Get available main challenges (prerequisites met, not mastered)
+ */
+function getAvailableMainChallenges(userId, masteredChallenges) {
+  let query = `
+    SELECT c.id, c.title, c.prerequisite_ids, c.is_practice
+    FROM (
+      SELECT 'py-01' as id, 'The Awakening: Mana Calculation' as title, '[]' as prerequisite_ids, 0 as is_practice
+      UNION SELECT 'py-02', 'Rank Identifier: Gate Thresholds', '["py-01"]', 0
+      UNION SELECT 'py-03', 'Inventory Purification: Data Types', '["py-01"]', 0
+      UNION SELECT 'py-04', 'Shadow Soldier Count: Loops & Iteration', '["py-02"]', 0
+      UNION SELECT 'py-05', 'Dungeon Key Generator: Even/Odd Logic', '["py-02","py-04"]', 0
+      UNION SELECT 'py-06', 'The Double Dungeon: While Loop Countdown', '["py-04"]', 0
+      UNION SELECT 'py-07', 'Potion Brewer: Dictionary & Mapping', '["py-03","py-04"]', 0
+      UNION SELECT 'py-08', 'Shadow Extraction: List Manipulation & Reversal', '["py-04","py-05"]', 0
+      UNION SELECT 'py-09', 'Monarch''s Command: Higher-Order Functions', '["py-01","py-06"]', 0
+      UNION SELECT 'py-10', 'Abyss Boss: Recursive Power Surge', '["py-04","py-06"]', 0
+    ) c
+    WHERE c.is_practice = 0
+  `;
+  
+  const params = [];
+  if (masteredChallenges.length > 0) {
+    query += ` AND c.id NOT IN (${masteredChallenges.map(() => '?').join(',')})`;
+    params.push(...masteredChallenges);
+  }
+  
+  const allChallenges = db.prepare(query).all(...params);
+  
+  return allChallenges.filter(c => {
+    if (!c.prerequisite_ids || c.prerequisite_ids === '[]') return true;
+    try {
+      const prereqs = JSON.parse(c.prerequisite_ids);
+      return prereqs.every(p => masteredChallenges.includes(p));
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * Get available practice challenges (main challenge mastered, practice not mastered)
+ */
+function getAvailablePracticeChallenges(userId, masteredChallenges) {
+  const practiceMap = {
+    'py-01': 'py-01-practice',
+    'py-02': 'py-02-practice',
+    'py-03': 'py-03-practice',
+    'py-04': 'py-04-practice',
+    'py-05': 'py-05-practice',
+    'py-06': 'py-06-practice',
+    'py-07': 'py-07-practice',
+    'py-08': 'py-08-practice',
+    'py-09': 'py-09-practice',
+    'py-10': 'py-10-practice',
+  };
+  
+  const available = [];
+  for (const [mainId, practiceId] of Object.entries(practiceMap)) {
+    if (masteredChallenges.includes(mainId) && !masteredChallenges.includes(practiceId)) {
+      // Get practice challenge title
+      const practiceTitle = getPracticeTitle(practiceId);
+      available.push({ id: practiceId, title: practiceTitle });
+    }
+  }
+  return available;
+}
+
+function getPracticeTitle(practiceId) {
+  const titles = {
+    'py-01-practice': 'Practice: Mana Surge Calculation',
+    'py-02-practice': 'Practice: Elite Rank Thresholds',
+    'py-03-practice': 'Practice: Enhanced Item Formatter',
+    'py-04-practice': 'Practice: Weighted Soldier Sum',
+    'py-05-practice': 'Practice: Modulo Filter Variations',
+    'py-06-practice': 'Practice: Variable Step Countdown',
+    'py-07-practice': 'Practice: Bulk Potion Cost with Discounts',
+    'py-08-practice': 'Practice: Partial Squad Reversal',
+    'py-09-practice': 'Practice: Multiplier Chain',
+    'py-10-practice': 'Practice: Iterative Power Surge',
+  };
+  return titles[practiceId] || practiceId;
+}
+
+/**
+ * Get available concepts (mastery_level < 5)
+ */
+function getAvailableConcepts(userId, masteredConcepts) {
+  const allConcepts = ['variables', 'conditionals', 'strings', 'loops', 'arrays', 'functions', 'dictionaries', 'recursion'];
+  return allConcepts
+    .filter(c => !masteredConcepts.includes(c) || 
+      db.prepare('SELECT mastery_level FROM concept_mastery WHERE user_id = ? AND concept_id = ?').get(userId, c)?.mastery_level < 5)
+    .map(concept_id => {
+      const row = db.prepare('SELECT mastery_level FROM concept_mastery WHERE user_id = ? AND concept_id = ?').get(userId, concept_id);
+      return { concept_id, mastery_level: row?.mastery_level || 0 };
+    });
+}
+
+/**
+ * Update daily quest progress when user completes a qualifying activity
+ */
+export function updateDailyQuestProgress(userId, missionType, targetId) {
+  const today = getUtcDateString();
+  const now = new Date().toISOString();
+  
+  const quest = db.prepare(`
+    SELECT * FROM daily_quests 
+    WHERE user_id = ? AND quest_date = ? AND mission_type = ? AND target_id = ? AND status = 'available'
+  `).get(userId, today, missionType, targetId);
+  
+  if (!quest) return null;
+  
+  const newProgress = Math.min(quest.progress + 1, quest.target_progress);
+  const newStatus = newProgress >= quest.target_progress ? 'completed' : 'available';
+  
+  db.prepare(`
+    UPDATE daily_quests 
+    SET progress = ?, status = ?, completed_at = ?
+    WHERE id = ?
+  `).run(newProgress, newStatus, newStatus === 'completed' ? now : null, quest.id);
+  
+  // Check if all daily quests are completed to unlock chest
+  checkAndUnlockChest(userId, today);
+  
+  return { ...quest, progress: newProgress, status: newStatus };
+}
+
+/**
+ * Check if all daily quests are completed and unlock chest
+ */
+function checkAndUnlockChest(userId, dateStr) {
+  const incomplete = db.prepare(`
+    SELECT COUNT(*) as count FROM daily_quests 
+    WHERE user_id = ? AND quest_date = ? AND status != 'completed'
+  `).get(userId, dateStr);
+  
+  if (incomplete.count === 0) {
+    db.prepare(`
+      UPDATE reward_chests 
+      SET status = 'available' 
+      WHERE user_id = ? AND quest_date = ? AND status = 'locked'
+    `).run(userId, dateStr);
+  }
+}
+
+/**
+ * Get reward chest state for today
+ */
+export function getRewardChest(userId) {
+  const today = getUtcDateString();
+  return db.prepare(`
+    SELECT * FROM reward_chests WHERE user_id = ? AND quest_date = ?
+  `).get(userId, today);
+}
+
+/**
+ * Claim reward chest (idempotent)
+ */
+export function claimRewardChest(userId) {
+  const today = getUtcDateString();
+  const now = new Date().toISOString();
+  
+  const chest = db.prepare(`
+    SELECT * FROM reward_chests WHERE user_id = ? AND quest_date = ?
+  `).get(userId, today);
+  
+  if (!chest || chest.status !== 'available') {
+    return { success: false, reason: chest?.status === 'claimed' ? 'already_claimed' : 'not_available', xpAwarded: 0 };
+  }
+  
+  // Atomically claim chest and award XP
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    // Check again inside transaction
+    const chestCheck = db.prepare(`
+      SELECT * FROM reward_chests WHERE user_id = ? AND quest_date = ?
+    `).get(userId, today);
+    
+    if (!chestCheck || chestCheck.status !== 'available') {
+      db.exec('ROLLBACK');
+      return { success: false, reason: 'not_available', xpAwarded: 0 };
+    }
+    
+    // Update chest status
+    db.prepare(`
+      UPDATE reward_chests SET status = 'claimed', claimed_at = ? WHERE id = ?
+    `).run(now, chestCheck.id);
+    
+    // Mark all daily quests as claimed
+    db.prepare(`
+      UPDATE daily_quests SET status = 'claimed' WHERE user_id = ? AND quest_date = ?
+    `).run(userId, today);
+    
+    // Award XP
+    const xpAwarded = chestCheck.total_xp_reward;
+    const profile = db.prepare('SELECT * FROM profiles WHERE user_id = ?').get(userId);
+    
+    if (profile) {
+      let level = profile.level;
+      let xp = profile.xp + xpAwarded;
+      let xpNeeded = profile.xp_to_next_level;
+      let levelsGained = 0;
+      
+      while (xp >= xpNeeded) {
+        xp -= xpNeeded;
+        level += 1;
+        levelsGained += 1;
+        xpNeeded = Math.round(1500 + level * 150 + Math.pow(level, 1.4) * 20);
+      }
+      
+      const rankThresholds = [
+        { rank: 'E-Rank', minLevel: 1 },
+        { rank: 'D-Rank', minLevel: 10 },
+        { rank: 'C-Rank', minLevel: 20 },
+        { rank: 'B-Rank', minLevel: 35 },
+        { rank: 'A-Rank', minLevel: 50 },
+        { rank: 'S-Rank', minLevel: 70 },
+        { rank: 'National Level', minLevel: 90 },
+        { rank: 'Monarch', minLevel: 100 },
+      ];
+      
+      let newRank = 'E-Rank';
+      for (const t of rankThresholds) {
+        if (level >= t.minLevel) newRank = t.rank;
+      }
+      
+      const rankChanged = newRank !== profile.rank;
+      const completedCount = profile.quests_completed + 1;
+      
+      db.prepare(`
+        UPDATE profiles
+        SET level = ?, xp = ?, xp_to_next_level = ?, rank = ?, quests_completed = ?, updated_at = ?
+        WHERE user_id = ?
+      `).run(level, xp, xpNeeded, newRank, completedCount, now, userId);
+    }
+    
+    db.exec('COMMIT');
+    
+    return { success: true, xpAwarded, reason: null };
+  } catch (err) {
+    try { db.exec('ROLLBACK'); } catch {}
+    throw err;
+  }
+}
+
+/**
+ * Update learning streak when user completes a qualifying activity
+ */
+export function updateLearningStreak(userId) {
+  const today = getUtcDateString();
+  const now = new Date().toISOString();
+  
+  const streak = db.prepare('SELECT * FROM streak_data WHERE user_id = ?').get(userId);
+  
+  if (!streak) {
+    // First time - initialize streak
+    db.prepare(`
+      INSERT INTO streak_data (user_id, current_streak, longest_streak, last_activity_date, updated_at)
+      VALUES (?, 1, 1, ?, ?)
+    `).run(userId, today, now);
+    
+    // Update profile streak
+    db.prepare('UPDATE profiles SET streak = 1, updated_at = ? WHERE user_id = ?').run(now, userId);
+    return { currentStreak: 1, longestStreak: 1, streakContinued: true };
+  }
+  
+  const lastDate = streak.last_activity_date;
+  
+  if (lastDate === today) {
+    // Already counted today
+    return { 
+      currentStreak: streak.current_streak, 
+      longestStreak: streak.longest_streak, 
+      streakContinued: false,
+      alreadyCounted: true
+    };
+  }
+  
+  let newStreak = streak.current_streak;
+  let streakContinued = false;
+  
+  // Check if yesterday (streak continues)
+  const yesterday = getUtcDateString(new Date(Date.now() - 24 * 60 * 60 * 1000));
+  if (lastDate === yesterday) {
+    newStreak = streak.current_streak + 1;
+    streakContinued = true;
+  } else {
+    // Missed day(s) - reset streak
+    newStreak = 1;
+  }
+  
+  const newLongest = Math.max(streak.longest_streak, newStreak);
+  
+  db.prepare(`
+    UPDATE streak_data 
+    SET current_streak = ?, longest_streak = ?, last_activity_date = ?, updated_at = ?
+    WHERE user_id = ?
+  `).run(newStreak, newLongest, today, now, userId);
+  
+  // Update profile streak
+  db.prepare('UPDATE profiles SET streak = ?, updated_at = ? WHERE user_id = ?').run(newStreak, now, userId);
+  
+  return { currentStreak: newStreak, longestStreak: newLongest, streakContinued };
+}
+
+/**
+ * Get streak data for user
+ */
+export function getStreakData(userId) {
+  return db.prepare('SELECT * FROM streak_data WHERE user_id = ?').get(userId) || {
+    user_id: userId,
+    current_streak: 0,
+    longest_streak: 0,
+    last_activity_date: null,
+  };
+}
+
+/**
+ * Get daily quests with chest state for frontend
+ */
+export function getDailyQuestData(userId) {
+  const quests = getOrGenerateDailyQuests(userId);
+  const chest = getRewardChest(userId);
+  const streak = getStreakData(userId);
+  
+  return {
+    quests,
+    chest: chest || { status: 'locked', total_xp_reward: 0 },
+    streak,
+    date: getUtcDateString(),
+  };
 }

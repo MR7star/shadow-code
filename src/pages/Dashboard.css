@@ -403,7 +403,307 @@
   color: var(--text-muted);
 }
 
-/* ─── Player Stats (Radar) ────────────────────────────────────── */
+.activity-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.activity-empty span {
+  font-size: 2rem;
+  margin-bottom: 8px;
+}
+
+/* ─── Daily Quests Enhanced Styles ───────────────────────────── */
+.streak-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: var(--color-warning-glow);
+  color: var(--color-warning);
+  border-radius: var(--radius-full);
+  font-size: 0.65rem;
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.reset-timer {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.chest-container {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.reward-chest {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  transition: all var(--transition-fast);
+}
+
+.reward-chest.locked {
+  border-color: var(--border-subtle);
+  opacity: 0.6;
+}
+
+.reward-chest.available {
+  border-color: var(--accent-primary);
+  background: var(--accent-primary-subtle);
+  animation: pulseGlow 2s ease-in-out infinite;
+}
+
+.reward-chest.claimed {
+  border-color: var(--color-success);
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.chest-icon {
+  font-size: 1.25rem;
+}
+
+.chest-xp {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--accent-cyan);
+}
+
+.claiming-spinner {
+  font-size: 1rem;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Daily Quest Items Enhanced */
+.daily-quest {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  margin-bottom: 10px;
+  transition: all var(--transition-fast);
+}
+
+.daily-quest:last-child {
+  margin-bottom: 0;
+}
+
+.daily-quest:hover {
+  border-color: var(--border-default);
+  background: var(--bg-hover);
+}
+
+.daily-quest.completed {
+  border-color: var(--color-success);
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.daily-quest.claimed {
+  border-color: var(--border-subtle);
+  opacity: 0.7;
+}
+
+.daily-quest-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+
+.daily-quest-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.daily-quest-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.daily-quest-type {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  color: var(--text-muted);
+}
+
+.daily-quest-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.daily-quest-desc {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.daily-quest-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.daily-quest-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-hover);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.daily-quest-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-primary-dim), var(--accent-primary), var(--accent-cyan));
+  border-radius: var(--radius-full);
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.daily-quest-progress-text {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.daily-quest-reward {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.daily-quest-xp {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--accent-cyan);
+}
+
+.daily-quest-status-icon {
+  font-size: 0.9rem;
+}
+
+.daily-quest-status-icon.completed {
+  color: var(--color-success);
+}
+
+.daily-quest-status-icon.claimed {
+  color: var(--text-muted);
+}
+
+.daily-quests-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.empty-icon {
+  font-size: 2.5rem;
+  margin-bottom: 12px;
+}
+
+.empty-text {
+  font-size: 0.85rem;
+  margin-bottom: 16px;
+  max-width: 300px;
+}
+
+.refresh-daily-btn {
+  padding: 8px 16px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.refresh-daily-btn:hover:not(:disabled) {
+  background: var(--accent-primary-subtle);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.refresh-daily-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Streak Info */
+.streak-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 16px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  margin-top: 16px;
+}
+
+.streak-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 120px;
+}
+
+.streak-label {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.streak-value {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Player Stats (Radar) */
 .stats-panel-content {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

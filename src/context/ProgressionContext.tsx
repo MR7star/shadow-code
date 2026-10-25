@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import type { Player, Quest, Skill, ActivityEntry, ConceptMastery } from '../types';
+import type { Player, Quest, Skill, ActivityEntry, ConceptMastery, DailyQuestData } from '../types';
 import { useAuth } from './AuthContext';
 import {
   currentPlayer as defaultPlayer,
@@ -32,6 +32,10 @@ export interface ProgressionContextValue {
   claimedRewardIds: string[];
   conceptMastery: ConceptMastery[];
   isSyncing: boolean;
+  // Daily quests
+  dailyQuestData: DailyQuestData | null;
+  refreshDailyQuests: () => Promise<void>;
+  claimDailyChest: () => Promise<{ success: boolean; xpAwarded: number; reason?: string }>;
   startQuest: (questId: string) => boolean;
   completeQuest: (questId: string) => CompletionResult;
   applyServerAward: (questId: string, award: ServerAwardPayload) => void;
@@ -70,6 +74,7 @@ interface StoredProgressionData {
   recentActivity: ActivityEntry[];
   claimedRewardIds: string[];
   conceptMastery: ConceptMastery[];
+  dailyQuestData: DailyQuestData | null;
 }
 
 const ProgressionContext = createContext<ProgressionContextValue | null>(null);
@@ -86,6 +91,7 @@ function createPreviewData(): StoredProgressionData {
     recentActivity: defaultActivity,
     claimedRewardIds: initialClaimed,
     conceptMastery: [],
+    dailyQuestData: null,
   };
 }
 
@@ -160,6 +166,63 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
       setIsSyncing(false);
     }
   }, [token]);
+
+  const refreshDailyQuests = useCallback(async () => {
+    if (!token) return;
+
+    try {
+      const res = await fetch('/api/daily', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) return;
+
+      const dailyData = await res.json();
+      setData((prev) => ({
+        ...prev,
+        dailyQuestData: dailyData,
+      }));
+    } catch (err) {
+      console.warn('Could not sync daily quests with backend:', err);
+    }
+  }, [token]);
+
+  const claimDailyChest = useCallback(async () => {
+    if (!token) return { success: false, xpAwarded: 0, reason: 'unauthorized' };
+
+    try {
+      const res = await fetch('/api/daily/claim', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}` 
+        },
+      });
+
+      const result = await res.json();
+      
+      if (result.success) {
+        // Update local state with new profile and daily quest data
+        setData((prev) => ({
+          ...prev,
+          player: result.profile ? mapPlayerFromProfile(prev.player, result.profile) : prev.player,
+          dailyQuestData: prev.dailyQuestData ? {
+            ...prev.dailyQuestData,
+            chest: { ...prev.dailyQuestData.chest, status: 'claimed' as const },
+            quests: prev.dailyQuestData.quests.map(q => ({ ...q, status: 'claimed' as const })),
+          } : null,
+        }));
+        
+        // Also refresh full progress to get updated streak, etc.
+        void refreshProgress();
+      }
+      
+      return { success: result.success, xpAwarded: result.xpAwarded || 0, reason: result.reason };
+    } catch (err) {
+      console.warn('Could not claim daily chest:', err);
+      return { success: false, xpAwarded: 0, reason: 'error' };
+    }
+  }, [token, refreshProgress]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -243,6 +306,7 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
         recentActivity: newActivities.slice(0, 20),
         claimedRewardIds: claimed,
         conceptMastery: prev.conceptMastery,
+        dailyQuestData: prev.dailyQuestData,
       };
     });
   }, []);
@@ -323,6 +387,7 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
           ? data.claimedRewardIds
           : [...data.claimedRewardIds, questId],
         conceptMastery: data.conceptMastery,
+        dailyQuestData: data.dailyQuestData,
       });
 
       return {
@@ -353,6 +418,9 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
         claimedRewardIds: data.claimedRewardIds,
         conceptMastery: data.conceptMastery,
         isSyncing,
+        dailyQuestData: data.dailyQuestData,
+        refreshDailyQuests,
+        claimDailyChest,
         startQuest,
         completeQuest,
         applyServerAward,

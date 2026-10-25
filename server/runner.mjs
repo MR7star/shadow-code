@@ -1,7 +1,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { initDatabase, db, hasMasteredPrerequisites, updateConceptMastery, recordChallengeMastery, getUserConceptMastery, getUserMasteredChallenges } from './db.mjs';
+import { initDatabase, db, hasMasteredPrerequisites, updateConceptMastery, recordChallengeMastery, getUserConceptMastery, getUserMasteredChallenges, getOrGenerateDailyQuests, getRewardChest, claimRewardChest, getStreakData, getDailyQuestData, updateDailyQuestProgress } from './db.mjs';
 import {
   registerUser,
   loginUser,
@@ -11,6 +11,9 @@ import {
   startQuestForUser,
   awardQuestCompletionAtomic,
   getLeaderboard,
+  getDailyQuests,
+  claimDailyChest,
+  recordLearningActivity,
 } from './auth.mjs';
 import { serverChallenges } from './challenges.mjs';
 
@@ -18,7 +21,7 @@ import { serverChallenges } from './challenges.mjs';
 initDatabase();
 
 const PORT = process.env.PORT || 3001;
-const HOST = process.env.HOST || '127.0.0.1';
+const HOST = process.env.HOST || '0.0.0.0';
 const TIMEOUT_MS = parseInt(process.env.RUNNER_TIMEOUT_MS || '3000', 10);
 const MAX_OUTPUT_LENGTH = 10000;
 const MAX_CODE_LENGTH = 80000;
@@ -398,6 +401,33 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  // ─── Daily Quests: Get Today's Quests, Chest, and Streak ──────────
+  if (req.method === 'GET' && url.pathname === '/api/daily') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Unauthorized.' });
+    }
+    const dailyData = getDailyQuests(session.id);
+    return sendJson(res, 200, dailyData);
+  }
+
+  // ─── Daily Quests: Claim Reward Chest ────────────────────────────
+  if (req.method === 'POST' && url.pathname === '/api/daily/claim') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Unauthorized.' });
+    }
+    const result = claimDailyChest(session.id);
+    if (!result.success) {
+      return sendJson(res, 400, { error: result.reason, ...result });
+    }
+    // Refresh full progression after claiming
+    const full = getUserFullProgression(session.id);
+    return sendJson(res, 200, { ...result, profile: full.profile });
+  }
+
   // ─── Read Body Helper ──────────────────────────────────────────
   const readJsonBody = () => {
     return new Promise((resolve, reject) => {
@@ -661,6 +691,17 @@ const server = http.createServer(async (req, res) => {
         evalResult.durationMs,
         new Date().toISOString()
       );
+
+      // Record learning activity for streak and daily quest progress
+      if (allPassed) {
+        const activityType = challenge.isPractice ? 'practice_challenge' : 'main_challenge';
+        recordLearningActivity(session.id, activityType, challengeId);
+        
+        // Also record concept mastery activity if conceptId exists
+        if (challenge.conceptId) {
+          recordLearningActivity(session.id, 'concept_mastery', challenge.conceptId);
+        }
+      }
 
       return sendJson(res, 200, {
         success: evalResult.success,

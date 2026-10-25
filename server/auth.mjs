@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { db, hashPassword, verifyPassword, getUserConceptMastery } from './db.mjs';
+import { db, hashPassword, verifyPassword, getUserConceptMastery, getOrGenerateDailyQuests, getRewardChest, claimRewardChest, getStreakData, updateLearningStreak, getDailyQuestData, updateDailyQuestProgress } from './db.mjs';
 
 const SESSION_TTL_HOURS = parseInt(process.env.SESSION_TTL_HOURS || '72', 10);
 
@@ -572,4 +572,34 @@ export function getLeaderboard() {
     ...r,
     avatar: '',
   }));
+}
+
+/**
+ * Get daily quest data for user (quests, chest, streak)
+ */
+export function getDailyQuests(userId) {
+  return getDailyQuestData(userId);
+}
+
+/**
+ * Claim daily reward chest
+ */
+export function claimDailyChest(userId) {
+  return claimRewardChest(userId);
+}
+
+/**
+ * Record a qualifying learning activity (updates streak and daily quest progress)
+ */
+export function recordLearningActivity(userId, activityType, targetId) {
+  // Update streak
+  const streakResult = updateLearningStreak(userId);
+  
+  // Update daily quest progress
+  let questProgress = null;
+  if (activityType === 'main_challenge' || activityType === 'practice_challenge' || activityType === 'concept_mastery') {
+    questProgress = updateDailyQuestProgress(userId, activityType, targetId);
+  }
+  
+  return { streak: streakResult, questProgress };
 }

@@ -127,3 +127,50 @@ export interface MasteryRecord {
   level: number;
   updated_at: string;
 }
+
+// ─── Daily Quest Types ────────────────────────────────────────────
+
+export type DailyMissionType = 'main_challenge' | 'practice_challenge' | 'concept_mastery';
+export type DailyQuestStatus = 'available' | 'completed' | 'claimed';
+export type ChestStatus = 'locked' | 'available' | 'claimed';
+
+export interface DailyQuest {
+  id: string;
+  user_id: string;
+  quest_date: string;
+  mission_type: DailyMissionType;
+  target_id: string;
+  title: string;
+  description: string;
+  xp_reward: number;
+  progress: number;
+  target_progress: number;
+  status: DailyQuestStatus;
+  created_at: string;
+  completed_at?: string;
+}
+
+export interface RewardChest {
+  id: string;
+  user_id: string;
+  quest_date: string;
+  total_xp_reward: number;
+  status: ChestStatus;
+  claimed_at?: string;
+  created_at: string;
+}
+
+export interface StreakData {
+  user_id: string;
+  current_streak: number;
+  longest_streak: number;
+  last_activity_date?: string;
+  updated_at: string;
+}
+
+export interface DailyQuestData {
+  quests: DailyQuest[];
+  chest: RewardChest;
+  streak: StreakData;
+  date: string;
+}
