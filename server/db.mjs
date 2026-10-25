@@ -471,6 +471,7 @@ export function getOrGenerateDailyQuests(userId) {
 function generateDailyQuests(userId, dateStr) {
   const now = new Date().toISOString();
   const missions = [];
+  const usedKeys = new Set(); // Track (mission_type, target_id) to avoid UNIQUE constraint violations
   
   // Get user's mastered challenges and available challenges
   const masteredChallenges = db.prepare(`
@@ -490,136 +491,92 @@ function generateDailyQuests(userId, dateStr) {
   // Get concepts that can be mastered (mastery_level < 5)
   const availableConcepts = getAvailableConcepts(userId, masteredConcepts);
   
-  // Mission 1: Complete a main challenge
-  if (availableMainChallenges.length > 0) {
-    const challenge = availableMainChallenges[Math.floor(Math.random() * availableMainChallenges.length)];
+  function addMission(missionType, targetId, title, description, xpReward) {
+    const key = `${missionType}:${targetId}`;
+    if (usedKeys.has(key)) return false;
+    usedKeys.add(key);
     missions.push({
-      id: `dq_${userId}_${dateStr}_main_${challenge.id}`,
+      id: `dq_${userId}_${dateStr}_${missionType}_${targetId.replace(/[^a-zA-Z0-9]/g, '_')}`,
       user_id: userId,
       quest_date: dateStr,
-      mission_type: 'main_challenge',
-      target_id: challenge.id,
-      title: challenge.title,
-      description: `Complete the challenge: ${challenge.title}`,
-      xp_reward: 50,
+      mission_type: missionType,
+      target_id: targetId,
+      title,
+      description,
+      xp_reward: xpReward,
       progress: 0,
       target_progress: 1,
       status: 'available',
       created_at: now,
     });
+    return true;
+  }
+  
+  // Mission 1: Complete a main challenge
+  if (availableMainChallenges.length > 0) {
+    const challenge = availableMainChallenges[Math.floor(Math.random() * availableMainChallenges.length)];
+    addMission('main_challenge', challenge.id, challenge.title,
+      `Complete the challenge: ${challenge.title}`, 50);
   }
   
   // Mission 2: Complete a practice challenge
   if (availablePracticeChallenges.length > 0) {
     const challenge = availablePracticeChallenges[Math.floor(Math.random() * availablePracticeChallenges.length)];
-    missions.push({
-      id: `dq_${userId}_${dateStr}_practice_${challenge.id}`,
-      user_id: userId,
-      quest_date: dateStr,
-      mission_type: 'practice_challenge',
-      target_id: challenge.id,
-      title: challenge.title,
-      description: `Complete the practice challenge: ${challenge.title}`,
-      xp_reward: 30,
-      progress: 0,
-      target_progress: 1,
-      status: 'available',
-      created_at: now,
-    });
+    addMission('practice_challenge', challenge.id, challenge.title,
+      `Complete the practice challenge: ${challenge.title}`, 30);
   }
   
   // Mission 3: Master a concept (increase mastery level)
   if (availableConcepts.length > 0) {
     const concept = availableConcepts[Math.floor(Math.random() * availableConcepts.length)];
-    missions.push({
-      id: `dq_${userId}_${dateStr}_concept_${concept.concept_id}`,
-      user_id: userId,
-      quest_date: dateStr,
-      mission_type: 'concept_mastery',
-      target_id: concept.concept_id,
-      title: `Master ${concept.concept_id}`,
-      description: `Increase your mastery of ${concept.concept_id} (current: ${concept.mastery_level}/5)`,
-      xp_reward: 40,
-      progress: 0,
-      target_progress: 1,
-      status: 'available',
-      created_at: now,
-    });
+    addMission('concept_mastery', concept.concept_id, `Master ${concept.concept_id}`,
+      `Increase your mastery of ${concept.concept_id} (current: ${concept.mastery_level}/5)`, 40);
   }
   
   // If we couldn't generate 3 missions, fill with fallback missions
   while (missions.length < 3) {
     const fallbackTypes = ['main_challenge', 'practice_challenge', 'concept_mastery'];
     const fallbackType = fallbackTypes[missions.length % fallbackTypes.length];
-    let fallbackMission;
+    let fallbackAdded = false;
     
     if (fallbackType === 'main_challenge' && availableMainChallenges.length > 0) {
-      const challenge = availableMainChallenges[missions.length % availableMainChallenges.length];
-      fallbackMission = {
-        id: `dq_${userId}_${dateStr}_main_fallback_${missions.length}`,
-        user_id: userId,
-        quest_date: dateStr,
-        mission_type: 'main_challenge',
-        target_id: challenge.id,
-        title: challenge.title,
-        description: `Complete the challenge: ${challenge.title}`,
-        xp_reward: 50,
-        progress: 0,
-        target_progress: 1,
-        status: 'available',
-        created_at: now,
-      };
-    } else if (fallbackType === 'practice_challenge' && availablePracticeChallenges.length > 0) {
-      const challenge = availablePracticeChallenges[missions.length % availablePracticeChallenges.length];
-      fallbackMission = {
-        id: `dq_${userId}_${dateStr}_practice_fallback_${missions.length}`,
-        user_id: userId,
-        quest_date: dateStr,
-        mission_type: 'practice_challenge',
-        target_id: challenge.id,
-        title: challenge.title,
-        description: `Complete the practice challenge: ${challenge.title}`,
-        xp_reward: 30,
-        progress: 0,
-        target_progress: 1,
-        status: 'available',
-        created_at: now,
-      };
-    } else if (availableConcepts.length > 0) {
-      const concept = availableConcepts[missions.length % availableConcepts.length];
-      fallbackMission = {
-        id: `dq_${userId}_${dateStr}_concept_fallback_${missions.length}`,
-        user_id: userId,
-        quest_date: dateStr,
-        mission_type: 'concept_mastery',
-        target_id: concept.concept_id,
-        title: `Master ${concept.concept_id}`,
-        description: `Increase your mastery of ${concept.concept_id} (current: ${concept.mastery_level}/5)`,
-        xp_reward: 40,
-        progress: 0,
-        target_progress: 1,
-        status: 'available',
-        created_at: now,
-      };
-    } else {
-      // Ultimate fallback - generic mission
-      fallbackMission = {
-        id: `dq_${userId}_${dateStr}_fallback_${missions.length}`,
-        user_id: userId,
-        quest_date: dateStr,
-        mission_type: 'main_challenge',
-        target_id: 'py-01',
-        title: 'Daily Training',
-        description: 'Complete any challenge to train your skills',
-        xp_reward: 25,
-        progress: 0,
-        target_progress: 1,
-        status: 'available',
-        created_at: now,
-      };
+      for (const challenge of availableMainChallenges) {
+        if (addMission('main_challenge', challenge.id, challenge.title,
+          `Complete the challenge: ${challenge.title}`, 50)) {
+          fallbackAdded = true;
+          break;
+        }
+      }
     }
     
-    missions.push(fallbackMission);
+    if (!fallbackAdded && fallbackType === 'practice_challenge' && availablePracticeChallenges.length > 0) {
+      for (const challenge of availablePracticeChallenges) {
+        if (addMission('practice_challenge', challenge.id, challenge.title,
+          `Complete the practice challenge: ${challenge.title}`, 30)) {
+          fallbackAdded = true;
+          break;
+        }
+      }
+    }
+    
+    if (!fallbackAdded && availableConcepts.length > 0) {
+      for (const concept of availableConcepts) {
+        if (addMission('concept_mastery', concept.concept_id, `Master ${concept.concept_id}`,
+          `Increase your mastery of ${concept.concept_id} (current: ${concept.mastery_level}/5)`, 40)) {
+          fallbackAdded = true;
+          break;
+        }
+      }
+    }
+    
+    if (!fallbackAdded) {
+      // Ultimate fallback - generic mission
+      if (addMission('main_challenge', 'py-01', 'Daily Training',
+        'Complete any challenge to train your skills', 25)) {
+        fallbackAdded = true;
+      }
+      if (!fallbackAdded) break; // Can't generate more unique missions
+    }
   }
   
   // Insert all missions
