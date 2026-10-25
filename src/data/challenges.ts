@@ -8,6 +8,18 @@ export interface ChallengeTestCase {
   callArg?: any;
 }
 
+export interface LessonContent {
+  conceptExplanation: string;
+  codeExample: string;
+  workedExample: {
+    input: string;
+    steps: string[];
+    output: any;
+  };
+  commonMistakes: string[];
+  progressiveHints: string[];
+}
+
 export interface PythonChallenge {
   id: string;
   questId: string;
@@ -25,6 +37,10 @@ export interface PythonChallenge {
   functionName: string;
   starterCode: string;
   sampleTests: ChallengeTestCase[];
+  lesson?: LessonContent;
+  practiceChallengeId?: string;
+  conceptId?: string;
+  isPractice?: boolean;
 }
 
 export const pythonChallenges: PythonChallenge[] = [
@@ -41,6 +57,8 @@ export const pythonChallenges: PythonChallenge[] = [
     description:
       'Write a function `calculate_mana(base_mana, intellect)` that calculates a hunter\'s total mana using the formula:\n\n`total_mana = base_mana + (intellect * 10)`\n\nReturn the computed integer value.',
     prerequisiteIds: [],
+    practiceChallengeId: 'py-01-practice',
+    conceptId: 'variables',
     learningObjectives: [
       'Define functions and accept integer parameters in Python',
       'Use arithmetic operators (+, *)',
@@ -84,6 +102,37 @@ export const pythonChallenges: PythonChallenge[] = [
         explanation: '200 + (12 * 10) = 320 mana.',
       },
     ],
+    lesson: {
+      conceptExplanation: 'Variables are containers for storing data values. In Python, you don\'t need to declare variable types explicitly - Python infers them automatically. This is called dynamic typing. Arithmetic operators like + and * follow standard mathematical precedence rules.',
+      codeExample: `# Simple variable assignment
+base_mana = 100
+intellect = 5
+
+# Arithmetic operations
+total = base_mana + (intellect * 10)
+print(total)  # Output: 150`,
+      workedExample: {
+        input: 'base_mana = 100, intellect = 5',
+        steps: [
+          'Step 1: Multiply intellect by 10: 5 * 10 = 50',
+          'Step 2: Add to base_mana: 100 + 50 = 150',
+          'Step 3: Return the result: 150'
+        ],
+        output: 150
+      },
+      commonMistakes: [
+        'Forgetting to use the return statement - the function will return None',
+        'Incorrect operator precedence - multiplication happens before addition',
+        'Not using the function parameters correctly',
+        'Trying to modify the parameters instead of calculating a new value'
+      ],
+      progressiveHints: [
+        'The formula is: base_mana plus (intellect multiplied by 10)',
+        'Use the + operator for addition and * for multiplication',
+        'Remember that multiplication has higher precedence than addition, so you need parentheses',
+        'Make sure to return the calculated value using the return keyword'
+      ]
+    },
   },
 
   {
@@ -105,6 +154,8 @@ export const pythonChallenges: PythonChallenge[] = [
       '- `1000 <= power_level <= 1999`: return `"A"`\n' +
       '- `power_level >= 2000`: return `"S"`',
     prerequisiteIds: ['py-01'],
+    practiceChallengeId: 'py-02-practice',
+    conceptId: 'conditionals',
     learningObjectives: [
       'Master conditional branching with `if`, `elif`, and `else`',
       'Use comparison operators (`<`, `<=`, `>=`, `==`)',
@@ -114,9 +165,48 @@ export const pythonChallenges: PythonChallenge[] = [
       '0 <= power_level <= 1,000,000',
       'power_level is a non-negative integer',
     ],
+    lesson: {
+      conceptExplanation: 'Conditional statements allow your code to make decisions. In Python, we use if, elif (else if), and else to execute different code blocks based on conditions. Comparison operators like <, <=, >, >=, ==, and != are used to evaluate conditions.',
+      codeExample: `# Conditional branching
+power_level = 150
+
+if power_level < 100:
+    rank = 'E'
+elif power_level <= 249:
+    rank = 'D'
+elif power_level <= 499:
+    rank = 'C'
+else:
+    rank = 'B'
+
+print(rank)  # Output: D`,
+      workedExample: {
+        input: 'power_level = 150',
+        steps: [
+          'Step 1: Check if power_level < 100? 150 < 100 is False',
+          'Step 2: Check elif power_level <= 249? 150 <= 249 is True',
+          'Step 3: Return rank = "D"'
+        ],
+        output: 'D'
+      },
+      commonMistakes: [
+        'Using assignment (=) instead of comparison (==)',
+        'Not handling boundary conditions correctly (off-by-one errors)',
+        'Forgetting to use elif and using multiple if statements instead',
+        'Not covering all possible ranges with an else clause'
+      ],
+      progressiveHints: [
+        'You need to check the power_level against different ranges using if/elif/else',
+        'Start from the lowest rank or highest rank - either approach works',
+        'Be careful with boundary values - check if 100 should be E or D',
+        'Use comparison operators: < for less than, <= for less than or equal to'
+      ]
+    },
     hints: [
-      'Check ranks from top to bottom (>= 2000 first) or bottom to top (< 100 first) to simplify chained conditions.',
-      'Remember Python allows chained comparisons like `100 <= power_level < 250`.',
+      'You need to check the power_level against different ranges using if/elif/else',
+      'Start from the lowest rank or highest rank - either approach works',
+      'Be careful with boundary values - check if 100 should be E or D',
+      'Use comparison operators: < for less than, <= for less than or equal to'
     ],
     functionName: 'identify_rank',
     starterCode: `def identify_rank(power_level: int) -> str:
@@ -174,6 +264,8 @@ export const pythonChallenges: PythonChallenge[] = [
       '- `Item Name` is capitalized in title case (e.g. `"shadow dagger"` -> `"Shadow Dagger"`).\n' +
       '- `xQuantity` appends `"x"` followed by the integer count.',
     prerequisiteIds: ['py-01'],
+    practiceChallengeId: 'py-03-practice',
+    conceptId: 'strings',
     learningObjectives: [
       'Manipulate strings with `.upper()` and `.title()`',
       'Format strings cleanly using f-strings',
@@ -188,6 +280,44 @@ export const pythonChallenges: PythonChallenge[] = [
       'Use Python f-strings: `f"[{rarity.upper()}] {name.title()} x{quantity}"`.',
       'The `.title()` method automatically capitalizes each word in a string.',
     ],
+    lesson: {
+      conceptExplanation: 'Strings are sequences of characters in Python. You can manipulate them using built-in methods like .upper() for uppercase, .lower() for lowercase, and .title() for title case. F-strings (formatted string literals) allow you to embed expressions inside string literals using curly braces.',
+      codeExample: `# String manipulation with methods
+name = 'shadow dagger'
+rarity = 'rare'
+quantity = 2
+
+# Convert rarity to uppercase
+rarity_upper = rarity.upper()  # 'RARE'
+
+# Convert name to title case
+name_title = name.title()  # 'Shadow Dagger'
+
+# Format with f-string
+formatted = f"[{rarity_upper}] {name_title} x{quantity}"
+print(formatted)  # Output: [RARE] Shadow Dagger x2`,
+      workedExample: {
+        input: 'name="shadow dagger", rarity="rare", quantity=2',
+        steps: [
+          'Step 1: Convert rarity to uppercase: "rare" -> "RARE"',
+          'Step 2: Convert name to title case: "shadow dagger" -> "Shadow Dagger"',
+          'Step 3: Format string: "[RARE] Shadow Dagger x2"'
+        ],
+        output: '[RARE] Shadow Dagger x2'
+      },
+      commonMistakes: [
+        'Forgetting to call the method - using .upper instead of .upper()',
+        'Not using f-strings correctly - missing curly braces or quotes',
+        'Trying to modify the original string instead of creating a new one',
+        'Mixing up .title() with .upper() or .capitalize()'
+      ],
+      progressiveHints: [
+        'Use string methods to transform the text: .upper() and .title()',
+        'F-strings let you combine variables into a string: f"[{var}] {other_var}"',
+        'The format should be: [RARITY] Item Name xQuantity',
+        'Make sure to call the methods with parentheses: rarity.upper() not rarity.upper'
+      ]
+    },
     functionName: 'format_item',
     starterCode: `def format_item(name: str, rarity: str, quantity: int) -> str:
     """
@@ -228,6 +358,8 @@ export const pythonChallenges: PythonChallenge[] = [
       'Calculate and return the sum of all soldier strengths that are strictly greater than 0 (`> 0`).\n' +
       'If the list is empty or contains no positive values, return `0`.',
     prerequisiteIds: ['py-02'],
+    practiceChallengeId: 'py-04-practice',
+    conceptId: 'loops',
     learningObjectives: [
       'Iterate over lists using `for` loops',
       'Filter elements with conditional statements',
@@ -241,6 +373,40 @@ export const pythonChallenges: PythonChallenge[] = [
       'Initialize `total = 0` before looping through `strengths`.',
       'Only add `s` to `total` if `s > 0`.',
     ],
+    lesson: {
+      conceptExplanation: 'Loops allow you to iterate over sequences like lists. A for loop iterates over each element in a list, executing code for each item. You can use conditional statements inside loops to filter or transform elements.',
+      codeExample: `# Summing positive values from a list
+strengths = [10, -5, 20, 0, 15]
+total = 0
+
+for strength in strengths:
+    if strength > 0:
+        total += strength
+
+print(total)  # Output: 45`,
+      workedExample: {
+        input: 'strengths = [10, -5, 15, 0, 25]',
+        steps: [
+          'Step 1: Initialize total = 0',
+          'Step 2: Loop through each strength value',
+          'Step 3: If strength > 0, add to total',
+          'Step 4: Return total'
+        ],
+        output: 50
+      },
+      commonMistakes: [
+        'Forgetting to initialize the accumulator variable before the loop',
+        'Using = instead of += for accumulation',
+        'Not checking the condition correctly (>= instead of >)',
+        'Iterating over indices instead of values when you only need values'
+      ],
+      progressiveHints: [
+        'Initialize a variable to store the sum, then loop through the list',
+        'Use a for loop: for strength in strengths:',
+        'Add a condition to only include values greater than 0',
+        'Use += to add to your running total'
+      ]
+    },
     functionName: 'sum_soldier_strengths',
     starterCode: `def sum_soldier_strengths(strengths: list[int]) -> int:
     """
@@ -285,6 +451,8 @@ export const pythonChallenges: PythonChallenge[] = [
       'Write a function `filter_even_keys(keys)` that takes a list of integers and returns a NEW list containing only the even integers in their original order.\n\n' +
       'An integer `n` is even if `n % 2 == 0`.',
     prerequisiteIds: ['py-02', 'py-04'],
+    practiceChallengeId: 'py-05-practice',
+    conceptId: 'arrays',
     learningObjectives: [
       'Use the modulo operator `%` to test parity (even vs odd)',
       'Construct a new list by appending elements',
@@ -298,6 +466,36 @@ export const pythonChallenges: PythonChallenge[] = [
       'An integer `k` is even if `k % 2 == 0`.',
       'List comprehension syntax: `[k for k in keys if k % 2 == 0]`.',
     ],
+    lesson: {
+      conceptExplanation: 'List comprehensions provide a concise way to create lists in Python. They combine iteration and filtering into a single expression. The modulo operator % returns the remainder of division - n % 2 == 0 checks if n is even.',
+      codeExample: `# Using list comprehension to filter evens
+keys = [1, 2, 3, 4, 5, 6]
+
+# Filter: keep only even numbers
+even_keys = [k for k in keys if k % 2 == 0]
+print(even_keys)  # Output: [2, 4, 6]`,
+      workedExample: {
+        input: 'keys = [1, 2, 3, 4, 5, 6]',
+        steps: [
+          'Step 1: Check each key if key % 2 == 0 (even)',
+          'Step 2: 1%2=1(odd), 2%2=0(even), 3%2=1(odd), 4%2=0(even), 5%2=1(odd), 6%2=0(even)',
+          'Step 3: Collect evens: [2, 4, 6]'
+        ],
+        output: [2, 4, 6]
+      },
+      commonMistakes: [
+        'Forgetting the modulo operator %',
+        'Using = instead of == in the condition',
+        'Not returning a new list but modifying the original',
+        'Forgetting to handle empty lists'
+      ],
+      progressiveHints: [
+        'Use the modulo operator to check if a number is even: n % 2 == 0',
+        'Create a new list using list comprehension: [item for item in list if condition]',
+        'Iterate through keys and only include those where key % 2 equals 0',
+        'Remember that 0 is considered even (0 % 2 == 0)'
+      ]
+    },
     functionName: 'filter_even_keys',
     starterCode: `def filter_even_keys(keys: list[int]) -> list[int]:
     """
@@ -345,6 +543,8 @@ export const pythonChallenges: PythonChallenge[] = [
       'Using a `while` loop, decrease the timer by `step` on each iteration until `statue_timer <= 0`. Return the total number of ticks survived.\n' +
       'If `statue_timer <= 0` initially, return `0`.',
     prerequisiteIds: ['py-04'],
+    practiceChallengeId: 'py-06-practice',
+    conceptId: 'loops',
     learningObjectives: [
       'Implement `while` loops with dynamic termination conditions',
       'Maintain iteration counters',
@@ -358,6 +558,45 @@ export const pythonChallenges: PythonChallenge[] = [
       'Initialize `ticks = 0`. While `statue_timer > 0`, subtract `step` and increment `ticks`.',
       'Check if `statue_timer <= 0` at the very start to immediately return 0.',
     ],
+    lesson: {
+      conceptExplanation: 'While loops repeat code as long as a condition is true. They\'re useful when you don\'t know in advance how many iterations you need. Always include a way for the condition to become false, or you\'ll create an infinite loop.',
+      codeExample: `# Countdown with while loop
+timer = 10
+step = 3
+ticks = 0
+
+while timer > 0:
+    timer -= step
+    ticks += 1
+
+print(ticks)  # Output: 4`,
+      workedExample: {
+        input: 'timer=10, step=3',
+        steps: [
+          'Step 1: Initialize ticks = 0',
+          'Step 2: While timer > 0: 10 > 0 is True',
+          'Step 3: tick 1: timer = 10-3=7, ticks=1',
+          'Step 4: tick 2: timer = 7-3=4, ticks=2',
+          'Step 5: tick 3: timer = 4-3=1, ticks=3',
+          'Step 6: tick 4: timer = 1-3=-2, ticks=4',
+          'Step 7: timer > 0 is False, exit loop',
+          'Step 8: Return ticks = 4'
+        ],
+        output: 4
+      },
+      commonMistakes: [
+        'Forgetting to initialize the counter before the loop',
+        'Not updating the loop variable inside the loop (infinite loop)',
+        'Using the wrong comparison operator (> instead of >=)',
+        'Forgetting to handle the case when timer is already <= 0'
+      ],
+      progressiveHints: [
+        'Initialize a counter variable to track iterations',
+        'Use a while loop with condition timer > 0',
+        'Inside the loop: subtract step from timer and increment counter',
+        'Check if timer <= 0 at the start to return 0 immediately'
+      ]
+    },
     functionName: 'survive_statue_countdown',
     starterCode: `def survive_statue_countdown(statue_timer: int, step: int) -> int:
     """
@@ -406,6 +645,8 @@ export const pythonChallenges: PythonChallenge[] = [
       'If an ingredient is not present in `prices`, its cost is treated as `0`.\n' +
       'Return the total integer cost.',
     prerequisiteIds: ['py-03', 'py-04'],
+    practiceChallengeId: 'py-07-practice',
+    conceptId: 'dictionaries',
     learningObjectives: [
       'Iterate over dictionary keys and values with `.items()`',
       'Safely retrieve dictionary values using `.get(key, default)`',
@@ -420,6 +661,41 @@ export const pythonChallenges: PythonChallenge[] = [
       'Loop over `recipe.items()`: `for ingredient, qty in recipe.items():`',
       'Use `prices.get(ingredient, 0)` to default missing prices to 0 gold.',
     ],
+    lesson: {
+      conceptExplanation: 'Dictionaries (dicts) store key-value pairs in Python. You can iterate over dictionary items using .items() to get both keys and values. The .get(key, default) method safely retrieves values, returning a default if the key doesn\'t exist.',
+      codeExample: `# Dictionary iteration and safe access
+recipe = {'herb': 3, 'crystal': 2}
+prices = {'herb': 10, 'crystal': 50}
+
+total = 0
+for ingredient, qty in recipe.items():
+    price = prices.get(ingredient, 0)  # Safe access
+    total += qty * price
+
+print(total)  # Output: 130`,
+      workedExample: {
+        input: "recipe={'herb': 3, 'crystal': 2}, prices={'herb': 10, 'crystal': 50}",
+        steps: [
+          'Step 1: Iterate recipe items: (herb, 3), (crystal, 2)',
+          'Step 2: herb: 3 * prices.get(herb, 0) = 3 * 10 = 30',
+          'Step 3: crystal: 2 * prices.get(crystal, 0) = 2 * 50 = 100',
+          'Step 4: total = 30 + 100 = 130'
+        ],
+        output: 130
+      },
+      commonMistakes: [
+        'Using recipe[key] instead of .get() which raises KeyError for missing keys',
+        'Forgetting to multiply quantity by price',
+        'Not initializing the total variable',
+        'Iterating over keys only and looking up values separately'
+      ],
+      progressiveHints: [
+        'Use .items() to iterate over both keys and values in the recipe',
+        'Use .get(key, 0) to safely look up prices, defaulting to 0 if missing',
+        'Multiply quantity by price for each ingredient',
+        'Accumulate the total cost and return it'
+      ]
+    },
     functionName: 'calculate_potion_cost',
     starterCode: `def calculate_potion_cost(recipe: dict[str, int], prices: dict[str, int]) -> int:
     """
@@ -465,6 +741,8 @@ export const pythonChallenges: PythonChallenge[] = [
       'Write a function `reverse_squad_order(squad)` that takes a list of soldier names (strings) and returns a NEW list with the soldiers in reverse order.\n\n' +
       'Do not mutate the original `squad` list.',
     prerequisiteIds: ['py-04', 'py-05'],
+    practiceChallengeId: 'py-08-practice',
+    conceptId: 'arrays',
     learningObjectives: [
       'Apply list slicing `[::-1]` or `.copy()` techniques',
       'Preserve input data immutability',
@@ -478,6 +756,39 @@ export const pythonChallenges: PythonChallenge[] = [
       'In Python, list slicing with a negative step `squad[::-1]` creates a reversed copy.',
       'Alternatively, `list(reversed(squad))` returns a new reversed list without mutating the original.',
     ],
+    lesson: {
+      conceptExplanation: 'List slicing allows you to extract portions of lists. The syntax [start:stop:step] lets you specify start index, stop index, and step size. Using a negative step like [::-1] creates a reversed copy of the list without modifying the original.',
+      codeExample: `# Reversing a list with slicing
+squad = ['Igris', 'Tank', 'Iron', 'Beru']
+
+# Create a reversed copy
+reversed_squad = squad[::-1]
+print(reversed_squad)  # Output: ['Beru', 'Iron', 'Tank', 'Igris']
+
+# Original is unchanged
+print(squad)  # Output: ['Igris', 'Tank', 'Iron', 'Beru']`,
+      workedExample: {
+        input: "squad = ['Igris', 'Tank', 'Iron', 'Beru']",
+        steps: [
+          'Step 1: Use slicing with step -1: squad[::-1]',
+          'Step 2: This reads the list backwards',
+          'Step 3: Result: [\'Beru\', \'Iron\', \'Tank\', \'Igris\']'
+        ],
+        output: ['Beru', 'Iron', 'Tank', 'Igris']
+      },
+      commonMistakes: [
+        'Using .reverse() which modifies the list in-place',
+        'Trying to manually reverse with a loop instead of using slicing',
+        'Forgetting that slicing creates a new list (which is what we want)',
+        'Using incorrect slice notation like [::-2] which skips elements'
+      ],
+      progressiveHints: [
+        'Use list slicing with a negative step to reverse: list[::-1]',
+        'The ::-1 slice means: start at end, go to beginning, step by -1',
+        'This creates a new list without modifying the original',
+        'Alternatively, use list(reversed(squad)) for a more explicit approach'
+      ]
+    },
     functionName: 'reverse_squad_order',
     starterCode: `def reverse_squad_order(squad: list[str]) -> list[str]:
     """
@@ -530,6 +841,8 @@ export const pythonChallenges: PythonChallenge[] = [
       'triple_strike(50)  # returns 150\n' +
       '```',
     prerequisiteIds: ['py-01', 'py-06'],
+    practiceChallengeId: 'py-09-practice',
+    conceptId: 'functions',
     learningObjectives: [
       'Understand first-class functions in Python',
       'Construct closures that capture outer scope variables (`factor`)',
@@ -543,6 +856,39 @@ export const pythonChallenges: PythonChallenge[] = [
       'Define an inner function `def apply_buff(damage): return damage * factor` inside `create_multiplier`.',
       'Return the function object itself (`return apply_buff`), without calling it with parentheses.',
     ],
+    lesson: {
+      conceptExplanation: 'In Python, functions are first-class objects - they can be passed as arguments, returned from other functions, and assigned to variables. A closure is a function that remembers variables from its enclosing scope even after the outer function has finished.',
+      codeExample: `# Higher-order function returning a closure
+def create_multiplier(factor):
+    def apply_buff(damage):
+        return damage * factor
+    return apply_buff  # Return the function, not call it
+
+double = create_multiplier(2)
+print(double(50))  # Output: 100`,
+      workedExample: {
+        input: 'factor=3, applied to damage=50',
+        steps: [
+          'Step 1: create_multiplier(3) defines inner function with factor=3',
+          'Step 2: The inner function remembers factor=3 (closure)',
+          'Step 3: When called with damage=50: 50 * 3 = 150',
+          'Step 4: Return 150'
+        ],
+        output: 150
+      },
+      commonMistakes: [
+        'Calling the inner function instead of returning it: return apply_buff()',
+        'Forgetting to define the inner function inside the outer function',
+        'Not using the captured variable in the inner function',
+        'Trying to use the outer function directly instead of the returned inner function'
+      ],
+      progressiveHints: [
+        'Define an inner function inside create_multiplier that takes damage as parameter',
+        'The inner function should return damage * factor (factor is from outer scope)',
+        'Return the inner function object itself, not the result of calling it',
+        'The returned function can then be called with a damage value'
+      ]
+    },
     functionName: 'create_multiplier',
     starterCode: `def create_multiplier(factor: int):
     """
@@ -593,6 +939,8 @@ export const pythonChallenges: PythonChallenge[] = [
       '- `n=4 -> 3 + 2*(1) = 5`\n' +
       '- `n=5 -> 5 + 2*(3) = 11`',
     prerequisiteIds: ['py-09', 'py-06'],
+    practiceChallengeId: 'py-10-practice',
+    conceptId: 'recursion',
     learningObjectives: [
       'Implement recurrence relations and mathematical sequences',
       'Apply base cases and recursive thinking or iterative dynamic programming',
@@ -606,6 +954,44 @@ export const pythonChallenges: PythonChallenge[] = [
       'Watch out for repeated computation if using naive recursion! Using an iterative loop `for _ in range(2, n + 1):` computes the answer in O(n) time with zero recursion overhead.',
       'Check `if n == 0: return 0` and `if n == 1: return 1` as base conditions.',
     ],
+    lesson: {
+      conceptExplanation: 'Recursion is when a function calls itself to solve smaller instances of the same problem. Every recursive function needs base cases (conditions that stop the recursion) and a recursive case that breaks down the problem. Without base cases, you get infinite recursion.',
+      codeExample: `# Recursive function with base cases
+def calculate_surge_power(n):
+    # Base cases
+    if n == 0:
+        return 0
+    if n == 1:
+        return 1
+    
+    # Recursive case
+    return calculate_surge_power(n - 1) + 2 * calculate_surge_power(n - 2)
+
+print(calculate_surge_power(4))  # Output: 5`,
+      workedExample: {
+        input: 'n=4',
+        steps: [
+          'Step 1: n=4, not base case',
+          'Step 2: return f(3) + 2*f(2)',
+          'Step 3: f(3) = f(2) + 2*f(1) = 1 + 2*1 = 3',
+          'Step 4: f(2) = f(1) + 2*f(0) = 1 + 2*0 = 1',
+          'Step 5: return 3 + 2*1 = 5'
+        ],
+        output: 5
+      },
+      commonMistakes: [
+        'Forgetting base cases leading to infinite recursion (stack overflow)',
+        'Using the wrong recurrence formula',
+        'Not handling negative numbers',
+        'Trying to use iteration instead of recursion when recursion is required'
+      ],
+      progressiveHints: [
+        'Define base cases for n=0 and n=1 first',
+        'For the recursive case, use the formula: f(n-1) + 2*f(n-2)',
+        'Make sure the function calls itself with smaller values',
+        'The recursion will eventually reach the base cases and unwind'
+      ]
+    },
     functionName: 'calculate_surge_power',
     starterCode: `def calculate_surge_power(n: int) -> int:
     """

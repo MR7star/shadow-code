@@ -102,6 +102,29 @@ export function initDatabase() {
       UNIQUE(user_id, skill_id)
     );
 
+    -- Concept mastery tracking (separate from skills - tracks understanding of programming concepts)
+    CREATE TABLE IF NOT EXISTS concept_mastery (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      concept_id TEXT NOT NULL,
+      mastery_level INTEGER NOT NULL DEFAULT 0 CHECK(mastery_level >= 0 AND mastery_level <= 5),
+      first_completed_at TEXT,
+      last_practiced_at TEXT,
+      practice_count INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(user_id, concept_id)
+    );
+
+    -- Challenge mastery tracking (which challenges user has successfully completed)
+    CREATE TABLE IF NOT EXISTS challenge_mastery (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      challenge_id TEXT NOT NULL,
+      quest_id TEXT NOT NULL,
+      mastered_at TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 1,
+      UNIQUE(user_id, challenge_id)
+    );
+
     -- Active user sessions
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
@@ -115,6 +138,8 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_submissions_user ON submissions(user_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_xp_tx_user ON xp_transactions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_concept_mastery_user ON concept_mastery(user_id);
+    CREATE INDEX IF NOT EXISTS idx_challenge_mastery_user ON challenge_mastery(user_id);
   `);
 
   seedDemoUserIfMissing();
@@ -263,4 +288,111 @@ function seedDemoUserIfMissing() {
   for (const s of defaultSkills) {
     insertSkill.run(`mr_${userId}_${s.skill_id}`, userId, s.skill_id, s.level, now);
   }
+
+  // Seed initial concept mastery for demo user
+  const defaultConcepts = [
+    { concept_id: 'variables', mastery_level: 4 },
+    { concept_id: 'control-flow', mastery_level: 3 },
+    { concept_id: 'functions', mastery_level: 3 },
+    { concept_id: 'arrays', mastery_level: 2 },
+    { concept_id: 'strings', mastery_level: 1 },
+    { concept_id: 'loops', mastery_level: 2 },
+    { concept_id: 'conditionals', mastery_level: 3 },
+  ];
+
+  const insertConcept = db.prepare(`
+    INSERT INTO concept_mastery (id, user_id, concept_id, mastery_level, first_completed_at, last_practiced_at, practice_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  for (const c of defaultConcepts) {
+    insertConcept.run(
+      `cm_${userId}_${c.concept_id}`,
+      userId,
+      c.concept_id,
+      c.mastery_level,
+      now,
+      now,
+      5
+    );
+  }
+}
+
+/**
+ * Update or create concept mastery record
+ */
+export function updateConceptMastery(userId, conceptId, masteryLevel) {
+  const now = new Date().toISOString();
+  const existing = db.prepare(
+    'SELECT id, mastery_level, practice_count FROM concept_mastery WHERE user_id = ? AND concept_id = ?'
+  ).get(userId, conceptId);
+
+  if (existing) {
+    const newLevel = Math.min(5, Math.max(existing.mastery_level, masteryLevel));
+    const newCount = existing.practice_count + 1;
+    db.prepare(`
+      UPDATE concept_mastery
+      SET mastery_level = ?, last_practiced_at = ?, practice_count = ?
+      WHERE id = ?
+    `).run(newLevel, now, newCount, existing.id);
+  } else {
+    db.prepare(`
+      INSERT INTO concept_mastery (id, user_id, concept_id, mastery_level, first_completed_at, last_practiced_at, practice_count)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(`cm_${userId}_${conceptId}`, userId, conceptId, masteryLevel, now, now, 1);
+  }
+}
+
+/**
+ * Record challenge mastery on successful completion
+ */
+export function recordChallengeMastery(userId, challengeId, questId, attempts = 1) {
+  const now = new Date().toISOString();
+  const existing = db.prepare(
+    'SELECT id FROM challenge_mastery WHERE user_id = ? AND challenge_id = ?'
+  ).get(userId, challengeId);
+
+  if (!existing) {
+    db.prepare(`
+      INSERT INTO challenge_mastery (id, user_id, challenge_id, quest_id, mastered_at, attempts)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(`chm_${userId}_${challengeId}`, userId, challengeId, questId, now, attempts);
+  }
+}
+
+/**
+ * Get user's concept mastery levels
+ */
+export function getUserConceptMastery(userId) {
+  return db.prepare(`
+    SELECT concept_id, mastery_level, practice_count, last_practiced_at
+    FROM concept_mastery
+    WHERE user_id = ?
+  `).all(userId);
+}
+
+/**
+ * Get user's mastered challenges
+ */
+export function getUserMasteredChallenges(userId) {
+  return db.prepare(`
+    SELECT challenge_id, quest_id, mastered_at, attempts
+    FROM challenge_mastery
+    WHERE user_id = ?
+    ORDER BY mastered_at DESC
+  `).all(userId);
+}
+
+/**
+ * Check if user has mastered prerequisite challenges
+ */
+export function hasMasteredPrerequisites(userId, challengeId, prerequisiteIds) {
+  if (!prerequisiteIds || prerequisiteIds.length === 0) return true;
+  
+  const mastered = db.prepare(`
+    SELECT challenge_id FROM challenge_mastery
+    WHERE user_id = ? AND challenge_id IN (${prerequisiteIds.map(() => '?').join(',')})
+  `).all(userId, ...prerequisiteIds);
+  
+  return mastered.length === prerequisiteIds.length;
 }

@@ -78,6 +78,405 @@
   color: var(--accent-cyan);
 }
 
+.solver-concept-chip {
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: var(--bg-deep);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+/* Learning Mode Toggle */
+.solver-learning-toggle {
+  margin-top: 8px;
+}
+
+.solver-learning-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-deep);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.solver-learning-btn:hover {
+  background: rgba(139, 92, 246, 0.08);
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+}
+
+.solver-learning-btn.active {
+  background: var(--accent-primary-subtle);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+/* Lesson Panel */
+.solver-lesson-panel {
+  background: var(--bg-deep);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.solver-lesson-tabs {
+  display: flex;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  overflow-x: auto;
+  gap: 2px;
+  padding: 4px;
+}
+
+.solver-lesson-tab {
+  background: transparent;
+  border: none;
+  padding: 8px 14px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+
+.solver-lesson-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.solver-lesson-tab.active {
+  color: var(--accent-primary);
+  background: var(--accent-primary-subtle);
+}
+
+.solver-lesson-content {
+  padding: 16px;
+}
+
+.solver-lesson-section h4 {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.solver-lesson-section p {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.solver-code-example {
+  background: #090810;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: #cbd5e1;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+
+.solver-worked-example {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.solver-worked-input,
+.solver-worked-output {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.solver-worked-input strong,
+.solver-worked-output strong {
+  color: var(--text-primary);
+}
+
+.solver-worked-output code {
+  background: var(--bg-surface);
+  color: var(--accent-cyan);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+}
+
+.solver-worked-steps ol {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.8;
+  padding-left: 20px;
+}
+
+.solver-worked-steps li::marker {
+  color: var(--accent-primary);
+}
+
+.solver-mistakes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.solver-mistakes-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  background: rgba(239, 68, 68, 0.06);
+  border: 1px solid rgba(239, 68, 68, 0.15);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+}
+
+.solver-mistake-icon {
+  flex-shrink: 0;
+  font-size: 1rem;
+}
+
+.solver-progressive-hints {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.solver-hint-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.solver-hint-reveal-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: transparent;
+  border: none;
+  padding: 10px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent-cyan);
+  cursor: pointer;
+  text-align: left;
+  transition: all var(--transition-fast);
+}
+
+.solver-hint-reveal-btn:hover {
+  background: rgba(34, 211, 238, 0.08);
+}
+
+.solver-hint-reveal-btn.revealed {
+  color: var(--text-primary);
+  background: var(--accent-primary-subtle);
+}
+
+.solver-hint-content-revealed {
+  padding: 0 14px 12px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  border-top: 1px solid var(--border-subtle);
+  animation: fadeIn 0.2s ease;
+}
+
+/* Concept Mastery Progress */
+.solver-mastery-progress {
+  background: var(--accent-primary-subtle);
+  border: 1px solid var(--accent-primary-dim);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-top: 8px;
+}
+
+.solver-mastery-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent-primary);
+  margin-bottom: 8px;
+}
+
+.solver-mastery-bar {
+  height: 8px;
+  background: var(--bg-deep);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.solver-mastery-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-cyan));
+  border-radius: var(--radius-full);
+  transition: width 0.3s ease;
+}
+
+.solver-mastery-stats {
+  display: flex;
+  gap: 16px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+/* Error Banner */
+.solver-error-banner {
+  border-radius: var(--radius-md);
+  padding: 14px 18px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  animation: slideDown 0.2s ease;
+}
+
+.solver-error-banner.syntax {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #fcd34d;
+}
+
+.solver-error-banner.runtime {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #fca5a5;
+}
+
+.solver-error-banner.timeout {
+  background: rgba(139, 92, 246, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  color: #c4b5fd;
+}
+
+.solver-error-banner.incorrect_output {
+  background: rgba(6, 182, 212, 0.12);
+  border: 1px solid rgba(6, 182, 212, 0.35);
+  color: #67e8f9;
+}
+
+.solver-error-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.solver-error-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.solver-error-title {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.solver-error-desc {
+  font-size: 0.82rem;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.solver-error-hint {
+  font-size: 0.75rem;
+  opacity: 0.85;
+  padding-top: 4px;
+  border-top: 1px solid currentColor;
+  margin-top: 4px;
+}
+
+/* Practice Challenge Banner */
+.solver-practice-banner {
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.15), rgba(250, 204, 21, 0.1));
+  border: 2px solid rgba(251, 191, 36, 0.5);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  animation: slideDown 0.3s ease, pulseGlow 2s ease-in-out infinite;
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 12px rgba(251, 191, 36, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 24px rgba(251, 191, 36, 0.5);
+  }
+}
+
+.solver-practice-btn {
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  color: #000;
+  border: none;
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+  box-shadow: 0 4px 12px rgba(251, 191, 36, 0.4);
+}
+
+.solver-practice-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(251, 191, 36, 0.5);
+  filter: brightness(1.1);
+}
+
+/* Mastery Message */
+.solver-mastery-message {
+  background: rgba(34, 211, 238, 0.12);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #67e8f9;
+  font-size: 0.82rem;
+  animation: slideDown 0.3s ease;
+}
+
+/* Prerequisite Warning enhancement */
+.solver-desc-pane > div:first-child > div[style*="rgba(245, 158, 11"] {
+  background: rgba(239, 68, 68, 0.12) !important;
+  border-color: rgba(239, 68, 68, 0.35) !important;
+  color: #fca5a5 !important;
+}
+
 .solver-runner-status {
   display: flex;
   align-items: center;

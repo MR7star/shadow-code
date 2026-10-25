@@ -238,6 +238,10 @@ async function runTests() {
 
   // Test 14: Client-supplied XP/rank is ignored; server uses challenge registry
   console.log('Test 14: Client-supplied XP is ignored');
+  // First complete prerequisite py-01
+  const prereqCode = 'def calculate_mana(base_mana, intellect):\n    return base_mana + intellect * 10';
+  await post('/submit', { challengeId: 'py-01', code: prereqCode }, otherToken);
+  
   const spoof = await post('/submit', {
     challengeId: 'py-03',
     code: `def format_item(name, rarity, quantity):
@@ -250,7 +254,7 @@ async function runTests() {
   assert.equal(spoof.status, 200);
   assert.equal(spoof.data.allPassed, true);
   assert.equal(spoof.data.xpReward, 150);
-  assert.equal(spoof.data.player.xp, 150);
+  assert.equal(spoof.data.player.xp, 250); // 100 (py-01) + 150 (py-03)
   assert.notEqual(spoof.data.player.rank, 'Monarch');
   console.log('✓ Client-provided XP/rank ignored');
 

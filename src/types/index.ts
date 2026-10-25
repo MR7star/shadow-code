@@ -111,3 +111,19 @@ export interface ActivityEntry {
   type: 'quest' | 'level-up' | 'achievement' | 'skill' | 'streak';
   icon: string;
 }
+
+// ─── Learning & Mastery Types ─────────────────────────────────────
+
+export interface ConceptMastery {
+  concept_id: string;
+  mastery_level: number; // 0-5
+  practice_count: number;
+  first_completed_at?: string;
+  last_practiced_at?: string;
+}
+
+export interface MasteryRecord {
+  skill_id: string;
+  level: number;
+  updated_at: string;
+}

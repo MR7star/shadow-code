@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import type { Player, Quest, Skill, ActivityEntry } from '../types';
+import type { Player, Quest, Skill, ActivityEntry, ConceptMastery } from '../types';
 import { useAuth } from './AuthContext';
 import {
   currentPlayer as defaultPlayer,
@@ -30,6 +30,7 @@ export interface ProgressionContextValue {
   skills: Skill[];
   recentActivity: ActivityEntry[];
   claimedRewardIds: string[];
+  conceptMastery: ConceptMastery[];
   isSyncing: boolean;
   startQuest: (questId: string) => boolean;
   completeQuest: (questId: string) => CompletionResult;
@@ -68,6 +69,7 @@ interface StoredProgressionData {
   skills: Skill[];
   recentActivity: ActivityEntry[];
   claimedRewardIds: string[];
+  conceptMastery: ConceptMastery[];
 }
 
 const ProgressionContext = createContext<ProgressionContextValue | null>(null);
@@ -83,6 +85,7 @@ function createPreviewData(): StoredProgressionData {
     skills: defaultSkills,
     recentActivity: defaultActivity,
     claimedRewardIds: initialClaimed,
+    conceptMastery: [],
   };
 }
 
@@ -109,7 +112,7 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const { token, isAuthenticated, isLoading: authLoading } = useAuth();
   const [data, setData] = useState<StoredProgressionData>(createPreviewData);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [lastLevelUp, setLastLevelUp] = useState<{ level: number; rank: string; timestamp: number } | null>(null);
+  const [lastLevelUp] = useState<{ level: number; rank: string; timestamp: number } | null>(null);
 
   const refreshProgress = useCallback(async () => {
     if (!token) return;
@@ -140,12 +143,15 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
           return { ...s, level: bs ? bs.level : 0 };
         });
 
+        const conceptMastery = backendData.conceptMastery || [];
+
         return {
           ...prev,
           player: updatedPlayer,
           quests: updatedQuests,
           skills: updatedSkills,
           claimedRewardIds: backendData.claimedQuestIds || [],
+          conceptMastery,
         };
       });
     } catch (err) {
@@ -224,11 +230,6 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
       if (award.leveledUp) {
         newActivities.unshift(createLevelUpActivity(nextPlayer.level, nextPlayer.rank));
-        setLastLevelUp({
-          level: nextPlayer.level,
-          rank: nextPlayer.rank,
-          timestamp: Date.now(),
-        });
       }
 
       const claimed = prev.claimedRewardIds.includes(questId)
@@ -241,6 +242,7 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
         skills: updatedSkills,
         recentActivity: newActivities.slice(0, 20),
         claimedRewardIds: claimed,
+        conceptMastery: prev.conceptMastery,
       };
     });
   }, []);
@@ -320,6 +322,7 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
         claimedRewardIds: alreadyClaimed
           ? data.claimedRewardIds
           : [...data.claimedRewardIds, questId],
+        conceptMastery: data.conceptMastery,
       });
 
       return {
@@ -348,6 +351,7 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
         skills: data.skills,
         recentActivity: data.recentActivity,
         claimedRewardIds: data.claimedRewardIds,
+        conceptMastery: data.conceptMastery,
         isSyncing,
         startQuest,
         completeQuest,

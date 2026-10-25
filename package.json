@@ -7,6 +7,8 @@
     "dev": "vite",
     "runner": "node server/runner.mjs",
     "test:backend": "node tests/backend_auth_progression.test.mjs",
+    "test:mastery": "node tests/backend_mastery_prerequisites.test.mjs",
+    "test:all": "node tests/backend_auth_progression.test.mjs && node tests/backend_mastery_prerequisites.test.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },

@@ -26,8 +26,10 @@ interface RunResponse {
   results: TestCaseResult[];
   stdout?: string;
   error?: string | null;
+  errorType?: 'syntax' | 'runtime' | 'timeout' | 'incorrect_output' | null;
   durationMs?: number;
   isSubmission?: boolean;
+  isPractice?: boolean;
   xpReward?: number;
   isDuplicate?: boolean;
   leveledUp?: boolean;
@@ -36,6 +38,42 @@ interface RunResponse {
     level?: number;
     rank?: string;
   };
+  masteryMessage?: string;
+}
+
+interface LessonContent {
+  conceptExplanation: string;
+  codeExample: string;
+  workedExample: {
+    input: string;
+    steps: string[];
+    output: any;
+  };
+  commonMistakes: string[];
+  progressiveHints: string[];
+}
+
+interface ChallengeWithLesson {
+  id: string;
+  questId: string;
+  title: string;
+  difficulty: QuestDifficulty;
+  category: string;
+  xpReward: number;
+  estimatedMinutes: number;
+  description: string;
+  storyIntro: string;
+  prerequisiteIds: string[];
+  learningObjectives: string[];
+  constraints: string[];
+  hints: string[];
+  functionName: string;
+  starterCode: string;
+  sampleTests: any[];
+  lesson?: LessonContent;
+  practiceChallengeId?: string;
+  isPractice?: boolean;
+  conceptId?: string;
 }
 
 function getRankColor(difficulty: QuestDifficulty): string {
@@ -50,12 +88,9 @@ function getRankColor(difficulty: QuestDifficulty): string {
   return map[difficulty] || 'var(--text-muted)';
 }
 
-// Level-up sound effect (Japanese-style announcement)
 const playLevelUpSound = () => {
   try {
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-    
-    // Create a dramatic level-up fanfare
     const playTone = (freq: number, startTime: number, duration: number, type: OscillatorType = 'sine') => {
       const osc = audioContext.createOscillator();
       const gain = audioContext.createGain();
@@ -69,19 +104,14 @@ const playLevelUpSound = () => {
       osc.start(startTime);
       osc.stop(startTime + duration);
     };
-
     const now = audioContext.currentTime;
-    
-    // Rising arpeggio fanfare (Japanese RPG style)
-    playTone(523.25, now, 0.15, 'square');      // C5
-    playTone(659.25, now + 0.1, 0.15, 'square'); // E5
-    playTone(783.99, now + 0.2, 0.15, 'square'); // G5
-    playTone(1046.50, now + 0.3, 0.3, 'square'); // C6 (climax)
-    
-    // Victory chord
-    playTone(523.25, now + 0.5, 0.4, 'triangle'); // C5
-    playTone(659.25, now + 0.5, 0.4, 'triangle'); // E5
-    playTone(783.99, now + 0.5, 0.4, 'triangle'); // G5
+    playTone(523.25, now, 0.15, 'square');
+    playTone(659.25, now + 0.1, 0.15, 'square');
+    playTone(783.99, now + 0.2, 0.15, 'square');
+    playTone(1046.50, now + 0.3, 0.3, 'square');
+    playTone(523.25, now + 0.5, 0.4, 'triangle');
+    playTone(659.25, now + 0.5, 0.4, 'triangle');
+    playTone(783.99, now + 0.5, 0.4, 'triangle');
   } catch (e) {
     console.warn('Could not play level-up sound:', e);
   }
@@ -89,19 +119,16 @@ const playLevelUpSound = () => {
 
 export default function QuestSolver() {
   const { questId } = useParams<{ questId: string }>();
-  const { quests, isQuestClaimed, applyServerAward, refreshProgress, player } = useProgression();
+  const { quests, isQuestClaimed, applyServerAward, refreshProgress, player, conceptMastery } = useProgression();
   const { token, isAuthenticated, openAuthModal } = useAuth();
   const hasPlayedLevelUpSound = useRef(false);
 
-  // Find matching challenge
   const challenge = useMemo(() => {
-    return getChallengeById(questId || '') || pythonChallenges[0];
+    return getChallengeById(questId || '') as ChallengeWithLesson | undefined || pythonChallenges[0] as ChallengeWithLesson;
   }, [questId]);
 
-  // Draft code persistent storage key
   const storageKey = `shadow_code_draft_${challenge.id}`;
 
-  // User's code state initialized from localStorage draft or starterCode
   const [code, setCode] = useState<string>(() => {
     try {
       const saved = localStorage.getItem(storageKey);
@@ -112,7 +139,6 @@ export default function QuestSolver() {
     return challenge.starterCode;
   });
 
-  // Auto-save draft on change
   useEffect(() => {
     try {
       localStorage.setItem(storageKey, code);
@@ -121,7 +147,6 @@ export default function QuestSolver() {
     }
   }, [code, storageKey]);
 
-  // If user switches quest, load matching draft or starter code
   useEffect(() => {
     try {
       const saved = localStorage.getItem(`shadow_code_draft_${challenge.id}`);
@@ -135,25 +160,26 @@ export default function QuestSolver() {
     setCode(challenge.starterCode);
   }, [challenge]);
 
-  // Runner service health status
   const [runnerStatus, setRunnerStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [isRunning, setIsRunning] = useState(false);
   const [evalResult, setEvalResult] = useState<RunResponse | null>(null);
   const [activeTab, setActiveTab] = useState<'tests' | 'console'>('tests');
-  const [revealedHints, setRevealedHints] = useState<number[]>([]);
+  // Separate state for progressive hints (lesson panel) vs legacy quick hints
+  const [revealedProgressiveHints, setRevealedProgressiveHints] = useState<number[]>([]);
+  const [revealedQuickHints, setRevealedQuickHints] = useState<number[]>([]);
+  const [learningMode, setLearningMode] = useState(false);
+  const [lessonSection, setLessonSection] = useState<'concept' | 'example' | 'worked' | 'mistakes' | 'hints'>('concept');
+  const [showPracticeChallenge, setShowPracticeChallenge] = useState(false);
 
-  // Check runner health
   const checkRunnerHealth = useCallback(async () => {
     setRunnerStatus('checking');
     try {
-      // Try direct Vite proxy or direct port
       const res = await fetch('/api/health', { method: 'GET' });
       if (res.ok) {
         setRunnerStatus('online');
         return;
       }
     } catch {
-      // Fallback check direct localhost:3001
       try {
         const directRes = await fetch('http://localhost:3001/api/health');
         if (directRes.ok) {
@@ -161,7 +187,6 @@ export default function QuestSolver() {
           return;
         }
       } catch {
-        // Runner offline
       }
     }
     setRunnerStatus('offline');
@@ -171,12 +196,10 @@ export default function QuestSolver() {
     checkRunnerHealth();
   }, [checkRunnerHealth]);
 
-  // Check if quest is already completed / claimed
   const alreadyClaimed = isQuestClaimed(challenge.questId);
   const currentQuest = quests.find((q) => q.id === challenge.questId);
   const isCompleted = currentQuest?.status === 'completed';
 
-  // Check prerequisites
   const unmetPrereqs = useMemo(() => {
     if (!challenge.prerequisiteIds || challenge.prerequisiteIds.length === 0) return [];
     return challenge.prerequisiteIds
@@ -192,7 +215,12 @@ export default function QuestSolver() {
       .filter((p) => !p.isCompleted);
   }, [challenge, quests]);
 
-  // Reset code action
+  const conceptMasteryLevel = useMemo(() => {
+    if (!challenge.conceptId) return 0;
+    const mastery = conceptMastery.find((cm: any) => cm.concept_id === challenge.conceptId);
+    return mastery?.mastery_level || 0;
+  }, [conceptMastery, challenge.conceptId]);
+
   const handleReset = () => {
     if (window.confirm('Reset code to the original starter template? Your current draft will be overwritten.')) {
       setCode(challenge.starterCode);
@@ -207,7 +235,6 @@ export default function QuestSolver() {
     return headers;
   };
 
-  // Run Code (Sample tests only)
   const handleRunCode = async () => {
     if (runnerStatus === 'offline') {
       await checkRunnerHealth();
@@ -249,6 +276,7 @@ export default function QuestSolver() {
         totalCount: 0,
         results: [],
         error: `Could not connect to code execution runner: ${err.message}`,
+        errorType: 'runtime',
       });
       setRunnerStatus('offline');
     } finally {
@@ -256,7 +284,6 @@ export default function QuestSolver() {
     }
   };
 
-  // Submit Solution (Sample + Hidden tests -> Progression reward)
   const handleSubmitSolution = async () => {
     if (!isAuthenticated) {
       openAuthModal();
@@ -267,6 +294,7 @@ export default function QuestSolver() {
         totalCount: 0,
         results: [],
         error: 'Sign in to submit challenges. XP is only stored for authenticated hunters.',
+        errorType: 'runtime',
       });
       return;
     }
@@ -297,6 +325,20 @@ export default function QuestSolver() {
       }
 
       const data = await res.json();
+      
+      if (res.status === 403 && data.code === 'PREREQUISITES_NOT_MET') {
+        setEvalResult({
+          success: false,
+          allPassed: false,
+          passedCount: 0,
+          totalCount: 0,
+          results: [],
+          error: data.error,
+          errorType: 'runtime',
+        });
+        return;
+      }
+
       if (res.status === 401) {
         openAuthModal();
         setEvalResult({
@@ -306,6 +348,7 @@ export default function QuestSolver() {
           totalCount: 0,
           results: [],
           error: data.error || 'Authentication required to submit solutions.',
+          errorType: 'runtime',
         });
         return;
       }
@@ -314,11 +357,9 @@ export default function QuestSolver() {
       setActiveTab('tests');
 
       if (data.allPassed) {
-        // Play level-up sound if user leveled up
         if (data.leveledUp && !hasPlayedLevelUpSound.current) {
           playLevelUpSound();
           hasPlayedLevelUpSound.current = true;
-          // Reset after a delay so subsequent level-ups can also play sound
           setTimeout(() => {
             hasPlayedLevelUpSound.current = false;
           }, 3000);
@@ -326,6 +367,12 @@ export default function QuestSolver() {
         
         applyServerAward(challenge.questId, data);
         await refreshProgress();
+        
+        if (data.isPractice) {
+          setShowPracticeChallenge(false);
+        } else if (challenge.practiceChallengeId) {
+          setShowPracticeChallenge(true);
+        }
       } else {
         hasPlayedLevelUpSound.current = false;
       }
@@ -337,6 +384,7 @@ export default function QuestSolver() {
         totalCount: 0,
         results: [],
         error: `Could not connect to code execution runner: ${err.message}`,
+        errorType: 'runtime',
       });
       setRunnerStatus('offline');
     } finally {
@@ -344,10 +392,48 @@ export default function QuestSolver() {
     }
   };
 
-  const toggleHint = (index: number) => {
-    setRevealedHints((prev) =>
+  const handlePracticeChallenge = () => {
+    if (challenge.practiceChallengeId) {
+      const practiceChallenge = getChallengeById(challenge.practiceChallengeId) as ChallengeWithLesson | undefined;
+      if (practiceChallenge) {
+        window.location.href = `/quest/${practiceChallenge.questId}?challenge=${practiceChallenge.id}`;
+      }
+    }
+  };
+
+  const toggleProgressiveHint = (index: number) => {
+    setRevealedProgressiveHints((prev) =>
       prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index]
     );
+  };
+
+  const toggleQuickHint = (index: number) => {
+    setRevealedQuickHints((prev) =>
+      prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index]
+    );
+  };
+
+  // First failing test (for richer inline feedback)
+  const firstFailedTest = evalResult?.results?.find((r) => !r.passed && !r.isHidden);
+
+  const getErrorIcon = (type?: string | null) => {
+    switch (type) {
+      case 'syntax': return '📝';
+      case 'runtime': return '⚡';
+      case 'timeout': return '⏱️';
+      case 'incorrect_output': return '🎯';
+      default: return '⚔️';
+    }
+  };
+
+  const getErrorLabel = (type?: string | null) => {
+    switch (type) {
+      case 'syntax': return 'Syntax Error';
+      case 'runtime': return 'Runtime Error';
+      case 'timeout': return 'Time Limit Exceeded';
+      case 'incorrect_output': return 'Incorrect Output';
+      default: return 'Error';
+    }
   };
 
   return (
@@ -371,6 +457,16 @@ export default function QuestSolver() {
           </span>
           <span className="solver-topic-chip">{challenge.category.replace(/-/g, ' ')}</span>
           <span className="solver-xp-chip">+{challenge.xpReward} XP</span>
+          {challenge.conceptId && (
+            <span className="solver-concept-chip" style={{ background: 'var(--accent-primary-subtle)', color: 'var(--accent-primary)' }}>
+              Concept: {challenge.conceptId}
+              {conceptMasteryLevel > 0 && (
+                <span style={{ marginLeft: '6px', opacity: 0.8 }}>
+                  Mastery Lv.{conceptMasteryLevel}/5
+                </span>
+              )}
+            </span>
+          )}
         </div>
 
         <div
@@ -396,14 +492,14 @@ export default function QuestSolver() {
 
       {/* Main Split Pane */}
       <div className="solver-split-container">
-        {/* Left Pane: Challenge Info */}
+        {/* Left Pane: Challenge Info + Learning Mode */}
         <div className="solver-desc-pane">
           <div>
             <h1 className="solver-title">{challenge.title}</h1>
           </div>
 
           {/* Prerequisite warning if unmet */}
-          {unmetPrereqs.length > 0 && (
+          {unmetPrereqs.length > 0 && !challenge.isPractice && (
             <div
               style={{
                 background: 'rgba(245, 158, 11, 0.1)',
@@ -414,14 +510,153 @@ export default function QuestSolver() {
                 color: 'var(--color-warning)',
               }}
             >
-              ⚠️ <strong>Prerequisites recommended:</strong> You have not completed{' '}
-              {unmetPrereqs.map((p) => `"${p.title}"`).join(', ')}. You can still attempt this quest!
+              🔒 <strong>Prerequisites Required:</strong> Complete{" "}
+              {unmetPrereqs.map((p) => `"${p.title}"`).join(', ')} before attempting this challenge.
             </div>
           )}
 
           {/* Story intro */}
           {challenge.storyIntro && (
             <div className="solver-story-intro">"{challenge.storyIntro}"</div>
+          )}
+
+          {/* Learning Mode Toggle */}
+          {challenge.lesson && (
+            <div className="solver-learning-toggle">
+              <button
+                type="button"
+                className={`solver-learning-btn ${learningMode ? 'active' : ''}`}
+                onClick={() => setLearningMode(!learningMode)}
+                style={{ width: '100%' }}
+              >
+                <span>{learningMode ? '📖 Hide Lesson' : '📖 Show Lesson'}</span>
+                <span>{learningMode ? '▲' : '▼'}</span>
+              </button>
+            </div>
+          )}
+
+          {/* Learning Mode Panel */}
+          {learningMode && challenge.lesson && (
+            <div className="solver-lesson-panel">
+              <div className="solver-lesson-tabs">
+                <button
+                  type="button"
+                  className={`solver-lesson-tab ${lessonSection === 'concept' ? 'active' : ''}`}
+                  onClick={() => setLessonSection('concept')}
+                >
+                  🧠 Concept
+                </button>
+                <button
+                  type="button"
+                  className={`solver-lesson-tab ${lessonSection === 'example' ? 'active' : ''}`}
+                  onClick={() => setLessonSection('example')}
+                >
+                  💻 Example
+                </button>
+                <button
+                  type="button"
+                  className={`solver-lesson-tab ${lessonSection === 'worked' ? 'active' : ''}`}
+                  onClick={() => setLessonSection('worked')}
+                >
+                  📝 Worked Example
+                </button>
+                <button
+                  type="button"
+                  className={`solver-lesson-tab ${lessonSection === 'mistakes' ? 'active' : ''}`}
+                  onClick={() => setLessonSection('mistakes')}
+                >
+                  ⚠️ Common Mistakes
+                </button>
+                <button
+                  type="button"
+                  className={`solver-lesson-tab ${lessonSection === 'hints' ? 'active' : ''}`}
+                  onClick={() => setLessonSection('hints')}
+                >
+                  🗝️ Progressive Hints
+                </button>
+              </div>
+
+              <div className="solver-lesson-content">
+                {lessonSection === 'concept' && (
+                  <div className="solver-lesson-section">
+                    <h4>Concept Explanation</h4>
+                    <p>{challenge.lesson.conceptExplanation}</p>
+                  </div>
+                )}
+
+                {lessonSection === 'example' && (
+                  <div className="solver-lesson-section">
+                    <h4>Code Example</h4>
+                    <pre className="solver-code-example"><code>{challenge.lesson.codeExample}</code></pre>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '8px' }}>
+                      Study this example to understand the pattern, then apply it to the challenge.
+                    </p>
+                  </div>
+                )}
+
+                {lessonSection === 'worked' && (
+                  <div className="solver-lesson-section">
+                    <h4>Worked Example</h4>
+                    <div className="solver-worked-example">
+                      <div className="solver-worked-input">
+                        <strong>Input:</strong> {challenge.lesson.workedExample.input}
+                      </div>
+                      <div className="solver-worked-steps">
+                        <strong>Steps:</strong>
+                        <ol>
+                          {challenge.lesson.workedExample.steps.map((step, i) => (
+                            <li key={i}>{step}</li>
+                          ))}
+                        </ol>
+                      </div>
+                      <div className="solver-worked-output">
+                        <strong>Output:</strong> <code>{JSON.stringify(challenge.lesson.workedExample.output)}</code>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {lessonSection === 'mistakes' && (
+                  <div className="solver-lesson-section">
+                    <h4>Common Mistakes to Avoid</h4>
+                    <ul className="solver-mistakes-list">
+                      {challenge.lesson.commonMistakes.map((mistake, i) => (
+                        <li key={i}>
+                          <span className="solver-mistake-icon">⚠️</span>
+                          <span>{mistake}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {lessonSection === 'hints' && (
+                  <div className="solver-lesson-section">
+                    <h4>Progressive Hints</h4>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '12px' }}>
+                      Reveal hints one at a time. Each hint gives more guidance without spoiling the solution.
+                    </p>
+                    <div className="solver-progressive-hints">
+                      {challenge.lesson.progressiveHints.map((hint, i) => (
+                        <div key={i} className="solver-hint-card">
+                          <button
+                            type="button"
+                            className={`solver-hint-reveal-btn ${revealedProgressiveHints.includes(i) ? 'revealed' : ''}`}
+                            onClick={() => toggleProgressiveHint(i)}
+                          >
+                            <span>Hint {i + 1}</span>
+                            <span>{revealedProgressiveHints.includes(i) ? '▲ Hide' : '▼ Show'}</span>
+                          </button>
+                          {revealedProgressiveHints.includes(i) && (
+                            <div className="solver-hint-content-revealed">{hint}</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           )}
 
           {/* Problem description */}
@@ -476,26 +711,49 @@ export default function QuestSolver() {
             </div>
           </div>
 
-          {/* Hints */}
-          {challenge.hints && challenge.hints.length > 0 && (
+          {/* Quick Hints — only show when lesson panel is closed and challenge has hints not in lesson */}
+          {challenge.hints && challenge.hints.length > 0 && !learningMode && (
             <div>
-              <div className="solver-section-heading">🗝️ Hints</div>
+              <div className="solver-section-heading">🗝️ Quick Hints</div>
               <div className="solver-hints-block">
                 {challenge.hints.map((hint, i) => (
                   <div key={i}>
                     <button
                       type="button"
                       className="solver-hint-btn"
-                      onClick={() => toggleHint(i)}
+                      onClick={() => toggleQuickHint(i)}
                     >
                       <span>Hint {i + 1}</span>
-                      <span>{revealedHints.includes(i) ? '▲ Hide' : '▼ Show'}</span>
+                      <span>{revealedQuickHints.includes(i) ? '▲ Hide' : '▼ Show'}</span>
                     </button>
-                    {revealedHints.includes(i) && (
+                    {revealedQuickHints.includes(i) && (
                       <div className="solver-hint-content">{hint}</div>
                     )}
                   </div>
                 ))}
+              </div>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                📖 Open the Lesson panel above for step-by-step explanation and progressive hints.
+              </p>
+            </div>
+          )}
+
+          {/* Concept Mastery Progress */}
+          {challenge.conceptId && conceptMasteryLevel > 0 && (
+            <div className="solver-mastery-progress">
+              <div className="solver-mastery-header">
+                <span>📊 Concept Mastery: {challenge.conceptId}</span>
+                <span>Level {conceptMasteryLevel} / 5</span>
+              </div>
+              <div className="solver-mastery-bar">
+                <div
+                  className="solver-mastery-fill"
+                  style={{ width: `${(conceptMasteryLevel / 5) * 100}%` }}
+                />
+              </div>
+              <div className="solver-mastery-stats">
+                <span>Practice sessions: {conceptMastery.find((cm: any) => cm.concept_id === challenge.conceptId)?.practice_count || 0}</span>
+                <span>Last practiced: {conceptMastery.find((cm: any) => cm.concept_id === challenge.conceptId)?.last_practiced_at ? new Date(conceptMastery.find((cm: any) => cm.concept_id === challenge.conceptId)?.last_practiced_at as string).toLocaleDateString() : 'Never'}</span>
               </div>
             </div>
           )}
@@ -523,6 +781,36 @@ export default function QuestSolver() {
               >
                 Retry Connection
               </button>
+            </div>
+          )}
+
+          {/* Practice Challenge Banner */}
+          {showPracticeChallenge && challenge.practiceChallengeId && (
+            <div className="solver-practice-banner">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span style={{ fontSize: '1.5rem' }}>🎯</span>
+                <div style={{ flex: 1 }}>
+                  <strong>Challenge Conquered!</strong>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                    Ready to prove mastery? Try the follow-up practice challenge to deepen your understanding.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="solver-practice-btn"
+                  onClick={handlePracticeChallenge}
+                >
+                  🎯 Practice Challenge
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Mastery Message from Practice Completion */}
+          {evalResult?.masteryMessage && (
+            <div className="solver-mastery-message">
+              <span>✨</span>
+              <span>{evalResult.masteryMessage}</span>
             </div>
           )}
 
@@ -569,8 +857,8 @@ export default function QuestSolver() {
                 type="button"
                 className="solver-submit-btn"
                 onClick={handleSubmitSolution}
-                disabled={isRunning || runnerStatus === 'offline'}
-                title="Run against sample + server-side hidden test cases to earn XP"
+                disabled={isRunning || runnerStatus === 'offline' || unmetPrereqs.length > 0}
+                title={unmetPrereqs.length > 0 ? 'Complete prerequisites first' : 'Run against sample + server-side hidden test cases to earn XP'}
               >
                 {isRunning ? '⏳ Evaluating...' : '⚔️ Submit Solution'}
               </button>
@@ -615,45 +903,73 @@ export default function QuestSolver() {
                 </div>
               )}
 
+              {/* Error Banner for Failed Submissions/Runs */}
+              {evalResult && !evalResult.allPassed && evalResult.error && (
+                <div className={`solver-error-banner ${evalResult.errorType || 'error'}`}>
+                  <div className="solver-error-icon">
+                    {getErrorIcon(evalResult.errorType)}
+                  </div>
+                  <div className="solver-error-content">
+                    <span className="solver-error-title">
+                      {getErrorLabel(evalResult.errorType)}
+                    </span>
+                    <span className="solver-error-desc">{evalResult.error}</span>
+                    {evalResult.errorType === 'incorrect_output' && firstFailedTest && !firstFailedTest.isHidden && (
+                      <div className="solver-error-hint">
+                        💡 First failed: <code style={{ fontSize: '0.78rem' }}>{firstFailedTest.description}</code>
+                        {' — '}your function returned <code style={{ color: 'var(--color-danger)', fontSize: '0.78rem' }}>{JSON.stringify(firstFailedTest.actual)}</code>,
+                        {' '}but the expected value is{' '}
+                        <code style={{ color: 'var(--color-success)', fontSize: '0.78rem' }}>{JSON.stringify(firstFailedTest.expected)}</code>.
+                        {' '}Check the test case list below for details.
+                      </div>
+                    )}
+                    {evalResult.errorType === 'incorrect_output' && (!firstFailedTest || firstFailedTest.isHidden) && (
+                      <div className="solver-error-hint">
+                        💡 Your logic is close — a hidden test case failed. Review edge cases like empty inputs, boundaries, and type handling.
+                      </div>
+                    )}
+                    {evalResult.errorType === 'timeout' && (
+                      <div className="solver-error-hint">
+                        💡 Your code exceeded the {3}s time limit. Check for infinite loops or replace naive recursion with an iterative approach.
+                      </div>
+                    )}
+                    {evalResult.errorType === 'syntax' && (
+                      <div className="solver-error-hint">
+                        💡 Python syntax error — check for missing colons after <code>if</code>/<code>for</code>/<code>def</code>, incorrect indentation (use 4 spaces), or unclosed parentheses.
+                      </div>
+                    )}
+                    {evalResult.errorType === 'runtime' && !evalResult.error?.includes('Authentication') && !evalResult.error?.includes('Prerequisites') && (
+                      <div className="solver-error-hint">
+                        💡 A runtime exception was raised during execution. Check that you handle all edge cases (e.g., empty lists, None values, division by zero).
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Submission Outcome Banners */}
-              {evalResult && evalResult.isSubmission && (
-                <>
-                  {evalResult.allPassed ? (
-                    <div className={`solver-feedback-banner success ${evalResult.leveledUp ? 'level-up' : ''}`}>
-                      <div className="solver-feedback-icon">
-                        {evalResult.leveledUp ? '⚡' : '🎉'}
-                      </div>
-                      <div className="solver-feedback-text">
-                        <span className="solver-feedback-title">
-                          {evalResult.leveledUp
-                            ? `LEVEL UP! Hunter Level ${evalResult.player?.level || player.level}!`
-                            : 'CHALLENGE CONQUERED! All Test Cases Passed!'}
-                        </span>
-                        <span className="solver-feedback-desc">
-                          {evalResult.isDuplicate
-                            ? 'All sample and hidden tests verified! (XP was already awarded previously).'
-                            : evalResult.leveledUp
-                            ? `レベルアップ！Victory! Gained +${evalResult.xpReward ?? challenge.xpReward} XP and advanced to Level ${evalResult.player?.level || player.level}! ${evalResult.rankChanged ? `Rank promoted to ${evalResult.player?.rank || player.rank}!` : ''}`
-                            : `Victory! Gained +${evalResult.xpReward ?? challenge.xpReward} XP and unlocked subsequent hunter quests!`}
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="solver-feedback-banner failed">
-                      <div className="solver-feedback-icon">⚔️</div>
-                      <div className="solver-feedback-text">
-                        <span className="solver-feedback-title">
-                          Submission Incomplete ({evalResult.passedCount}/{evalResult.totalCount}{' '}
-                          passed)
-                        </span>
-                        <span className="solver-feedback-desc">
-                          Some test cases failed or encountered runtime errors. Check the details
-                          below and adjust your logic.
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </>
+              {evalResult && evalResult.isSubmission && evalResult.allPassed && (
+                <div className={`solver-feedback-banner success ${evalResult.leveledUp ? 'level-up' : ''}`}>
+                  <div className="solver-feedback-icon">
+                    {evalResult.leveledUp ? '⚡' : '🎉'}
+                  </div>
+                  <div className="solver-feedback-text">
+                    <span className="solver-feedback-title">
+                      {evalResult.leveledUp
+                        ? `LEVEL UP! Hunter Level ${evalResult.player?.level || player.level}!`
+                        : 'CHALLENGE CONQUERED! All Test Cases Passed!'}
+                    </span>
+                    <span className="solver-feedback-desc">
+                      {evalResult.isDuplicate
+                        ? 'All sample and hidden tests verified! (XP was already awarded previously).'
+                        : evalResult.leveledUp
+                        ? `レベルアップ！Victory! Gained +${evalResult.xpReward ?? challenge.xpReward} XP and advanced to Level ${evalResult.player?.level || player.level}! ${evalResult.rankChanged ? `Rank promoted to ${evalResult.player?.rank || player.rank}!` : ''}`
+                        : `Victory! Gained +${evalResult.xpReward ?? challenge.xpReward} XP!${
+                            challenge.conceptId ? ` Concept mastery for "${challenge.conceptId}" increased.` : ''
+                          }${challenge.practiceChallengeId && !evalResult.isDuplicate ? ' Try the Practice Challenge to deepen your understanding.' : ''}`}
+                    </span>
+                  </div>
+                </div>
               )}
 
               {/* Sample Run Outcome Banner */}

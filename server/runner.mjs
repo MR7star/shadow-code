@@ -1,7 +1,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { initDatabase, db } from './db.mjs';
+import { initDatabase, db, hasMasteredPrerequisites, updateConceptMastery, recordChallengeMastery, getUserConceptMastery, getUserMasteredChallenges } from './db.mjs';
 import {
   registerUser,
   loginUser,
@@ -22,6 +22,29 @@ const HOST = process.env.HOST || '127.0.0.1';
 const TIMEOUT_MS = parseInt(process.env.RUNNER_TIMEOUT_MS || '3000', 10);
 const MAX_OUTPUT_LENGTH = 10000;
 const MAX_CODE_LENGTH = 80000;
+
+// Error categorization helper
+function categorizeError(evalResult) {
+  if (!evalResult.success) {
+    if (evalResult.error && evalResult.error.includes('Time Limit Exceeded')) {
+      return { type: 'timeout', message: 'Time Limit Exceeded: Your code took too long to execute. Check for infinite loops or inefficient algorithms.' };
+    }
+    if (evalResult.error && (evalResult.error.includes('SyntaxError') || evalResult.error.includes('IndentationError'))) {
+      return { type: 'syntax', message: `Syntax Error: ${evalResult.error.split('\n')[0]}` };
+    }
+    return { type: 'runtime', message: `Runtime Error: ${evalResult.error?.split('\n')[0] || 'Unknown error'}` };
+  }
+  
+  if (!evalResult.allPassed) {
+    const failedTest = evalResult.results.find(r => !r.passed);
+    if (failedTest?.error) {
+      return { type: 'runtime', message: `Runtime Error on test "${failedTest.description}": ${failedTest.error.split('\n')[0]}` };
+    }
+    return { type: 'incorrect_output', message: `Incorrect Output: Test "${failedTest?.description || 'unknown'}" failed. Expected ${JSON.stringify(failedTest?.expected)}, got ${JSON.stringify(failedTest?.actual)}.` };
+  }
+  
+  return { type: 'success', message: 'All tests passed!' };
+}
 
 // Security module restrictions list
 const RESTRICTED_MODULES = [
@@ -319,6 +342,62 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, list);
   }
 
+  // ─── Learning: Get Challenge Lesson Content ───────────────────────
+  if (req.method === 'GET' && url.pathname === '/api/learning/lesson') {
+    const challengeId = url.searchParams.get('challengeId');
+    if (!challengeId) {
+      return sendJson(res, 400, { error: 'Missing challengeId parameter.' });
+    }
+    const challenge = serverChallenges[challengeId];
+    if (!challenge) {
+      return sendJson(res, 404, { error: `Challenge '${challengeId}' not found.` });
+    }
+    // Return lesson content without hidden tests
+    return sendJson(res, 200, {
+      id: challenge.id,
+      questId: challenge.questId,
+      title: challenge.title,
+      conceptId: challenge.conceptId,
+      prerequisiteIds: challenge.prerequisiteIds,
+      lesson: challenge.lesson,
+    });
+  }
+
+  // ─── Learning: Get User Concept Mastery ───────────────────────
+  if (req.method === 'GET' && url.pathname === '/api/learning/mastery') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Unauthorized.' });
+    }
+    const mastery = getUserConceptMastery(session.id);
+    return sendJson(res, 200, { concepts: mastery });
+  }
+
+  // ─── Learning: Check Prerequisites ────────────────────────────
+  if (req.method === 'GET' && url.pathname === '/api/learning/prerequisites') {
+    const challengeId = url.searchParams.get('challengeId');
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    
+    if (!challengeId) {
+      return sendJson(res, 400, { error: 'Missing challengeId parameter.' });
+    }
+    const challenge = serverChallenges[challengeId];
+    if (!challenge) {
+      return sendJson(res, 404, { error: `Challenge '${challengeId}' not found.` });
+    }
+    
+    const hasPrereqs = session 
+      ? hasMasteredPrerequisites(session.id, challengeId, challenge.prerequisiteIds)
+      : true; // Allow unauthenticated users to view
+    
+    return sendJson(res, 200, {
+      hasPrerequisites: hasPrereqs,
+      prerequisiteIds: challenge.prerequisiteIds,
+    });
+  }
+
   // ─── Read Body Helper ──────────────────────────────────────────
   const readJsonBody = () => {
     return new Promise((resolve, reject) => {
@@ -477,6 +556,21 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 404, { error: `Challenge '${challengeId}' not found.` });
       }
 
+      // Check prerequisites for main challenges (not practice)
+      if (!challenge.isPractice && challenge.prerequisiteIds && challenge.prerequisiteIds.length > 0) {
+        const hasPrereqs = hasMasteredPrerequisites(session.id, challengeId, challenge.prerequisiteIds);
+        if (!hasPrereqs) {
+          const unmet = challenge.prerequisiteIds.filter(pid => 
+            !db.prepare('SELECT 1 FROM challenge_mastery WHERE user_id = ? AND challenge_id = ?').get(session.id, pid)
+          );
+          return sendJson(res, 403, { 
+            error: 'Prerequisites not met. Complete previous challenges first.',
+            unmetPrerequisites: unmet,
+            code: 'PREREQUISITES_NOT_MET'
+          });
+        }
+      }
+
       // Combine sample tests and secret hidden tests
       const testCasesToRun = [
         ...challenge.sampleTests.map((t) => ({ ...t, isHidden: false })),
@@ -485,6 +579,9 @@ const server = http.createServer(async (req, res) => {
 
       const script = buildHarnessScript(code, challenge.functionName, testCasesToRun);
       const evalResult = await executeInPythonProcess(script);
+
+      // Categorize error for better feedback
+      const errorInfo = categorizeError(evalResult);
 
       // Sanitize hidden test details for response
       const sanitizedResults = evalResult.results.map((r) => {
@@ -517,7 +614,28 @@ const server = http.createServer(async (req, res) => {
 
       // If all tests passed, perform authoritative atomic XP award and level calculation
       if (allPassed) {
-        xpAwardResult = awardQuestCompletionAtomic(session.id, challenge.questId, challenge.xpReward);
+        // Only award XP for main challenges, not practice challenges
+        const xpReward = challenge.isPractice ? 0 : challenge.xpReward;
+        xpAwardResult = awardQuestCompletionAtomic(session.id, challenge.questId, xpReward);
+        
+        // Track concept mastery and challenge mastery
+        // For main challenges: only on first completion (not duplicates)
+        // For practice challenges: always update concept mastery on successful completion
+        const isMainChallengeDuplicate = !challenge.isPractice && xpAwardResult.isDuplicate;
+        if (!isMainChallengeDuplicate) {
+          // Track concept mastery - increase level on successful completion
+          if (challenge.conceptId) {
+            // For main challenges, increase mastery level up to 3
+            // For practice challenges, increase up to 5
+            const targetLevel = challenge.isPractice ? 5 : 3;
+            updateConceptMastery(session.id, challenge.conceptId, targetLevel);
+          }
+          
+          // Record challenge mastery (only for main challenges)
+          if (!challenge.isPractice) {
+            recordChallengeMastery(session.id, challengeId, challenge.questId);
+          }
+        }
       }
 
       // Record submission in database audit log
@@ -551,14 +669,20 @@ const server = http.createServer(async (req, res) => {
         totalCount,
         results: sanitizedResults,
         stdout: evalResult.stdout,
-        error: evalResult.error,
+        error: allPassed ? null : errorInfo.message,
+        errorType: allPassed ? null : errorInfo.type,
         durationMs: evalResult.durationMs,
         isSubmission: true,
+        isPractice: challenge.isPractice || false,
         xpReward: xpAwardResult.xpAwarded,
         isDuplicate: xpAwardResult.isDuplicate,
         leveledUp: xpAwardResult.leveledUp,
         rankChanged: xpAwardResult.rankChanged,
         player: xpAwardResult.profile,
+        // If practice challenge passed, suggest next steps
+        ...(allPassed && challenge.isPractice ? {
+          masteryMessage: `Practice challenge mastered! Your ${challenge.conceptId} mastery has increased.`
+        } : {}),
       });
     } catch (err) {
       return sendJson(res, 500, { error: `Submission evaluation error: ${err.message}` });

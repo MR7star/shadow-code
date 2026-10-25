@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { db, hashPassword, verifyPassword } from './db.mjs';
+import { db, hashPassword, verifyPassword, getUserConceptMastery } from './db.mjs';
 
 const SESSION_TTL_HOURS = parseInt(process.env.SESSION_TTL_HOURS || '72', 10);
 
@@ -319,7 +319,7 @@ export function loginUser({ usernameOrEmail, password }) {
 }
 
 /**
- * Retrieves full user progression state: profile, quests, skills, claimed transactions.
+ * Retrieves full user progression state: profile, quests, skills, claimed transactions, concept mastery.
  */
 export function getUserFullProgression(userId) {
   const profile = parseProfileRow(
@@ -352,12 +352,15 @@ export function getUserFullProgression(userId) {
     LIMIT 20
   `).all(userId);
 
+  const conceptMastery = getUserConceptMastery(userId);
+
   return {
     profile,
     quests: questRows,
     skills: skillRows,
     claimedQuestIds: claimedRows.map((r) => r.quest_id),
     submissions,
+    conceptMastery,
   };
 }
 
