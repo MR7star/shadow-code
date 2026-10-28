@@ -6,9 +6,12 @@ import Layout from './components/layout/Layout';
 import Dashboard from './pages/Dashboard';
 import QuestBoard from './pages/QuestBoard';
 import SkillTree from './pages/SkillTree';
+import PromotionTrials from './pages/PromotionTrials';
 import Profile from './pages/Profile';
 import Leaderboard from './pages/Leaderboard';
 import QuestSolver from './pages/QuestSolver';
+import Dungeons from './pages/Dungeons';
+import DungeonSolver from './pages/DungeonSolver';
 
 function App() {
   return (
@@ -22,8 +25,11 @@ function App() {
               <Route path="/quest/:questId" element={<QuestSolver />} />
               <Route path="/challenge/:questId" element={<QuestSolver />} />
               <Route path="/skills" element={<SkillTree />} />
+              <Route path="/promotion" element={<PromotionTrials />} />
               <Route path="/profile" element={<Profile />} />
               <Route path="/leaderboard" element={<Leaderboard />} />
+              <Route path="/dungeons" element={<Dungeons />} />
+              <Route path="/dungeon/:dungeonId/challenge/:challengeId" element={<DungeonSolver />} />
             </Route>
           </Routes>
           <AuthModal />

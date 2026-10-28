@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import type { Player, Quest, Skill, ActivityEntry, ConceptMastery, DailyQuestData } from '../types';
+import type { Player, Quest, Skill, ActivityEntry, ConceptMastery, DailyQuestData, SkillWithState, PromotionTrialEligibility } from '../types';
 import { useAuth } from './AuthContext';
 import {
   currentPlayer as defaultPlayer,
@@ -24,6 +24,27 @@ export interface CompletionResult {
   message: string;
 }
 
+export interface PromotionAttemptResult {
+  success: boolean;
+  allPassed: boolean;
+  passedCount: number;
+  totalCount: number;
+  results: any[];
+  error?: string;
+  errorType?: string;
+  attempts?: number;
+  newRank?: string;
+  fromRank?: string;
+  toRank?: string;
+  alreadyCompleted?: boolean;
+  profile?: {
+    rank: string;
+    title: string;
+    level: number;
+    xp: number;
+  };
+}
+
 export interface ProgressionContextValue {
   player: Player;
   quests: Quest[];
@@ -43,6 +64,13 @@ export interface ProgressionContextValue {
   resetProgress: () => void;
   isQuestClaimed: (questId: string) => boolean;
   lastLevelUp: { level: number; rank: string; timestamp: number } | null;
+  // Skills
+  skillStates: SkillWithState[];
+  refreshSkills: () => Promise<void>;
+  // Promotion trials
+  promotionTrials: PromotionTrialEligibility[];
+  refreshPromotions: () => Promise<void>;
+  attemptPromotion: (trialId: string, code: string) => Promise<PromotionAttemptResult>;
 }
 
 export interface ServerAwardPayload {
@@ -75,6 +103,8 @@ interface StoredProgressionData {
   claimedRewardIds: string[];
   conceptMastery: ConceptMastery[];
   dailyQuestData: DailyQuestData | null;
+  skillStates: SkillWithState[];
+  promotionTrials: PromotionTrialEligibility[];
 }
 
 const ProgressionContext = createContext<ProgressionContextValue | null>(null);
@@ -84,6 +114,32 @@ function createPreviewData(): StoredProgressionData {
     .filter((q) => q.status === 'completed')
     .map((q) => q.id);
 
+  // Build preview skill states from mock data
+  const previewSkillStates = defaultSkills.map(s => {
+    const prereqs = s.prerequisiteIds;
+    const prereqsMet = prereqs.length === 0 || prereqs.every(p => {
+      const ps = defaultSkills.find(ss => ss.id === p);
+      return ps && ps.level > 0;
+    });
+    let state: SkillWithState['state'] = 'locked';
+    let unlockReason = null;
+    if (!prereqsMet) {
+      state = 'locked';
+      const unmet = prereqs.filter(p => {
+        const ps = defaultSkills.find(ss => ss.id === p);
+        return !ps || ps.level === 0;
+      });
+      unlockReason = `Requires: ${unmet.join(', ')}`;
+    } else if (s.level === 0) {
+      state = 'available';
+    } else if (s.level >= 5) {
+      state = 'mastered';
+    } else {
+      state = 'in-progress';
+    }
+    return { ...s, state, unlockReason };
+  });
+
   return {
     player: defaultPlayer,
     quests: defaultQuests,
@@ -92,6 +148,8 @@ function createPreviewData(): StoredProgressionData {
     claimedRewardIds: initialClaimed,
     conceptMastery: [],
     dailyQuestData: null,
+    skillStates: previewSkillStates,
+    promotionTrials: [],
   };
 }
 
@@ -307,6 +365,8 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
         claimedRewardIds: claimed,
         conceptMastery: prev.conceptMastery,
         dailyQuestData: prev.dailyQuestData,
+        skillStates: prev.skillStates,
+        promotionTrials: prev.promotionTrials,
       };
     });
   }, []);
@@ -388,6 +448,8 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
           : [...data.claimedRewardIds, questId],
         conceptMastery: data.conceptMastery,
         dailyQuestData: data.dailyQuestData,
+        skillStates: data.skillStates,
+        promotionTrials: data.promotionTrials,
       });
 
       return {
@@ -407,6 +469,87 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const resetProgress = useCallback(() => {
     setData(createPreviewData());
   }, []);
+
+  const refreshSkills = useCallback(async () => {
+    if (!token) return;
+
+    try {
+      const res = await fetch('/api/skills', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) return;
+
+      const backendData = await res.json();
+      setData((prev) => ({
+        ...prev,
+        skillStates: backendData.skills || [],
+      }));
+    } catch (err) {
+      console.warn('Could not sync skills with backend:', err);
+    }
+  }, [token]);
+
+  const refreshPromotions = useCallback(async () => {
+    if (!token) return;
+
+    try {
+      const res = await fetch('/api/promotion/trials', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) return;
+
+      const backendData = await res.json();
+      setData((prev) => ({
+        ...prev,
+        promotionTrials: backendData.trials || [],
+      }));
+    } catch (err) {
+      console.warn('Could not sync promotion trials with backend:', err);
+    }
+  }, [token]);
+
+  const attemptPromotion = useCallback(async (trialId: string, code: string): Promise<PromotionAttemptResult> => {
+    if (!token) {
+      return { success: false, allPassed: false, passedCount: 0, totalCount: 0, results: [], error: 'Unauthorized', errorType: 'unauthorized' };
+    }
+
+    try {
+      const res = await fetch('/api/promotion/trial/attempt', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ trialId, code }),
+      });
+
+      const result = await res.json();
+
+      if (result.success && result.profile) {
+        // Update player with new rank/title
+        setData((prev) => ({
+          ...prev,
+          player: {
+            ...prev.player,
+            rank: result.profile.rank,
+            title: result.profile.title,
+            level: result.profile.level,
+            xp: result.profile.xp,
+          },
+        }));
+        // Refresh promotions to update status
+        void refreshPromotions();
+      }
+
+      return result;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.warn('Could not attempt promotion:', errorMessage);
+      return { success: false, allPassed: false, passedCount: 0, totalCount: 0, results: [], error: errorMessage, errorType: 'error' };
+    }
+  }, [token, refreshPromotions]);
 
   return (
     <ProgressionContext.Provider
@@ -428,6 +571,13 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
         resetProgress,
         isQuestClaimed,
         lastLevelUp,
+        // Skills
+        skillStates: data.skillStates,
+        refreshSkills,
+        // Promotion trials
+        promotionTrials: data.promotionTrials,
+        refreshPromotions,
+        attemptPromotion,
       }}
     >
       {children}

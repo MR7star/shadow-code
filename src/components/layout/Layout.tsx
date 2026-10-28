@@ -15,7 +15,9 @@ interface NavItem {
 const baseNavItems: NavItem[] = [
   { path: '/', label: 'Dashboard', icon: '⚔️', section: 'main' },
   { path: '/quests', label: 'Quest Board', icon: '📜', section: 'main' },
+  { path: '/dungeons', label: 'Dungeons', icon: '🏰', section: 'main' },
   { path: '/skills', label: 'Skill Tree', icon: '🌟', section: 'main' },
+  { path: '/promotion', label: 'Promotion Trials', icon: '🏆', section: 'main' },
   { path: '/profile', label: 'Profile', icon: '👤', section: 'player' },
   { path: '/leaderboard', label: 'Leaderboard', icon: '🏆', section: 'player' },
 ];
@@ -23,7 +25,9 @@ const baseNavItems: NavItem[] = [
 const pageTitles: Record<string, string> = {
   '/': 'Hunter Dashboard',
   '/quests': 'Quest Board',
+  '/dungeons': 'Programming Dungeons',
   '/skills': 'Skill Tree',
+  '/promotion': 'Rank Promotion Trials',
   '/profile': 'Player Profile',
   '/leaderboard': 'Leaderboard',
 };

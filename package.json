@@ -8,7 +8,10 @@
     "runner": "node server/runner.mjs",
     "test:backend": "node tests/backend_auth_progression.test.mjs",
     "test:mastery": "node tests/backend_mastery_prerequisites.test.mjs",
-    "test:all": "node tests/backend_auth_progression.test.mjs && node tests/backend_mastery_prerequisites.test.mjs",
+    "test:promotion": "node tests/backend_promotion_trials.test.mjs",
+    "test:daily": "node tests/backend_daily_quests.test.mjs",
+    "test:dungeons": "node tests/backend_dungeons.test.mjs",
+    "test:all": "node tests/backend_auth_progression.test.mjs && node tests/backend_mastery_prerequisites.test.mjs && node tests/backend_promotion_trials.test.mjs && node tests/backend_daily_quests.test.mjs && node tests/backend_dungeons.test.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },

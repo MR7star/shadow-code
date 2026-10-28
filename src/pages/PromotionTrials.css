@@ -1,0 +1,612 @@
+/* ══════════════════════════════════════════════════════════════════════════════════
+   Promotion Trials Page Styles
+   ══════════════════════════════════════════════════════════════════════════════════ */
+
+.promotion-trials-page {
+  animation: fadeIn 0.4s ease;
+}
+
+.promotion-header {
+  margin-bottom: 24px;
+}
+
+.promotion-title {
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.promotion-subtitle {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+/* ─── Rank Card ───────────────────────────────────────── */
+.promotion-rank-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+@media (min-width: 768px) {
+  .promotion-rank-card {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+.promotion-rank-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.promotion-rank-badge {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 800;
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.2);
+  display: inline-block;
+}
+
+.promotion-rank-title {
+  font-size: 0.9rem;
+  color: var(--text-accent);
+  font-weight: 600;
+}
+
+.promotion-rank-hunter {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.promotion-rank-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.promotion-rank-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.promotion-rank-progress-bar {
+  height: 10px;
+  background: var(--bg-hover);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+
+.promotion-rank-progress-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  transition: width var(--transition-base);
+}
+
+/* ─── Trials Section ──────────────────────────────────── */
+.promotion-trials-section {
+  margin-bottom: 24px;
+}
+
+.promotion-section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.promotion-section-header h2 {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.promotion-section-header p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.promotion-trial-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+@media (min-width: 768px) {
+  .promotion-trial-cards {
+    grid-template-columns: repeat(2, 1fr);
+    display: grid;
+  }
+}
+
+.promotion-trial-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  cursor: pointer;
+  transition: all var(--transition-base);
+  position: relative;
+}
+
+.promotion-trial-card:hover {
+  border-color: var(--border-default);
+  box-shadow: var(--shadow-md);
+}
+
+.promotion-trial-card.available {
+  border-color: var(--accent-primary);
+}
+
+.promotion-trial-card.locked {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.promotion-trial-card.completed {
+  border-color: var(--color-success);
+}
+
+.promotion-trial-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.promotion-trial-rank-chip {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+}
+
+.promotion-trial-card.available .promotion-trial-rank-chip {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.promotion-trial-card.completed .promotion-trial-rank-chip {
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+
+.promotion-trial-status-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.promotion-trial-title {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.promotion-trial-desc {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.promotion-trial-requirements {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.promotion-req {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.promotion-req-met {
+  color: var(--color-success);
+}
+
+.promotion-req-unmet {
+  color: var(--text-muted);
+}
+
+.promotion-trial-lock-reason {
+  font-size: 0.75rem;
+  color: var(--color-warning);
+  margin-bottom: 16px;
+  background: rgba(245, 158, 11, 0.1);
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.promotion-trial-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.promotion-trial-attempts {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.promotion-trial-btn {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.8rem;
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  background: var(--accent-primary);
+  color: white;
+  transition: all var(--transition-fast);
+}
+
+.promotion-trial-btn:hover:not(:disabled) {
+  background: var(--accent-primary-dim);
+  box-shadow: var(--shadow-glow-md);
+}
+
+.promotion-trial-card.locked .promotion-trial-btn,
+.promotion-trial-card.completed .promotion-trial-btn {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─── Trial Detail ────────────────────────────────────── */
+.promotion-trial-detail {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
+  padding: 24px;
+  max-width: 800px;
+  margin: 0 auto;
+  animation: fadeInUp 0.3s ease;
+}
+
+.promotion-detail-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  font-size: 1.5rem;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  z-index: 10;
+}
+
+.promotion-detail-header {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.promotion-detail-header h2 {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.promotion-detail-rank {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  font-weight: 800;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-default);
+}
+
+.promotion-detail-desc {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  margin-bottom: 24px;
+  line-height: 1.6;
+}
+
+.promotion-detail-requirements h3 {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 12px;
+}
+
+.promotion-req-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.promotion-req-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.85rem;
+}
+
+.promotion-req-icon {
+  font-size: 1rem;
+}
+
+.promotion-req-item.met .promotion-req-icon {
+  color: var(--color-success);
+}
+
+.promotion-req-item.unmet .promotion-req-icon {
+  color: var(--text-muted);
+}
+
+.promotion-req-item.met span:last-child {
+  color: var(--text-secondary);
+}
+
+.promotion-req-item.unmet span:last-child {
+  color: var(--text-muted);
+}
+
+/* ─── Challenge Section ───────────────────────────────── */
+.promotion-challenge-section {
+  margin-bottom: 20px;
+}
+
+.promotion-challenge-section h3 {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+}
+
+.promotion-challenge-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  background: var(--bg-hover);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+}
+
+.promotion-challenge-title {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--accent-primary);
+}
+
+.promotion-challenge-desc {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+/* ─── Editor & Action Bar ─────────────────────────────── */
+.promotion-editor-pane {
+  margin-bottom: 20px;
+}
+
+.promotion-action-bar {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.promotion-btn-reset {
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+}
+
+.promotion-btn-attempt {
+  flex: 1;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.9rem;
+  padding: 12px 24px;
+  border-radius: var(--radius-md);
+  background: var(--accent-primary);
+  color: white;
+  border: none;
+}
+
+.promotion-btn-attempt:hover:not(:disabled) {
+  background: var(--accent-primary-dim);
+  box-shadow: var(--shadow-glow-md);
+}
+
+.promotion-btn-attempt.running {
+  opacity: 0.8;
+  cursor: wait;
+}
+
+.promotion-btn-attempt.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.promotion-attempt-error {
+  margin-top: 12px;
+  padding: 12px 16px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: var(--radius-md);
+  color: var(--color-danger);
+  font-size: 0.85rem;
+}
+
+/* ─── Success Overlay ─────────────────────────────────── */
+.promotion-success-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.3s ease;
+}
+
+.promotion-success-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-glow);
+  border-radius: var(--radius-xl);
+  padding: 32px;
+  text-align: center;
+  max-width: 450px;
+  width: 90%;
+  animation: fadeInUp 0.4s ease;
+}
+
+.promotion-success-icon {
+  font-size: 3rem;
+  margin-bottom: 16px;
+}
+
+.promotion-success-title {
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.promotion-rank-change {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 20px 0;
+}
+
+.promotion-rank-old,
+.promotion-rank-new {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  font-weight: 800;
+  padding: 12px 24px;
+  border-radius: var(--radius-md);
+}
+
+.promotion-rank-old {
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-subtle);
+}
+
+.promotion-rank-new {
+  color: var(--color-success);
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid var(--color-success);
+}
+
+.promotion-rank-arrow {
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  color: var(--text-accent);
+}
+
+.promotion-success-desc {
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+  margin-bottom: 24px;
+  line-height: 1.6;
+}
+
+.promotion-success-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 24px;
+  text-align: left;
+}
+
+.promotion-stat {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.promotion-stat-label {
+  color: var(--text-muted);
+}
+
+.promotion-stat-value {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.promotion-btn-continue {
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.95rem;
+  padding: 14px 32px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  color: white;
+  border: none;
+  box-shadow: var(--shadow-glow-md);
+}
+
+.promotion-btn-continue:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-glow-md);
+}
+
+/* ─── Responsive ──────────────────────────────────────── */
+@media (max-width: 640px) {
+  .promotion-trial-card {
+    padding: 16px;
+  }
+
+  .promotion-action-bar {
+    flex-direction: column;
+  }
+
+  .promotion-btn-attempt {
+    width: 100%;
+  }
+}

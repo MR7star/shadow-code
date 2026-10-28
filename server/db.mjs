@@ -102,6 +102,23 @@ export function initDatabase() {
       UNIQUE(user_id, skill_id)
     );
 
+    -- Rank promotion trials tracking (E, D, C, B, A, S)
+    CREATE TABLE IF NOT EXISTS rank_promotions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      from_rank TEXT NOT NULL,
+      to_rank TEXT NOT NULL,
+      challenge_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('locked', 'available', 'in-progress', 'completed', 'failed')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      started_at TEXT,
+      completed_at TEXT,
+      results_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_id, from_rank)
+    );
+
     -- Concept mastery tracking (separate from skills - tracks understanding of programming concepts)
     CREATE TABLE IF NOT EXISTS concept_mastery (
       id TEXT PRIMARY KEY,
@@ -422,6 +439,112 @@ export function getUserMasteredChallenges(userId) {
     WHERE user_id = ?
     ORDER BY mastered_at DESC
   `).all(userId);
+}
+
+/**
+ * Get user's skill mastery records (skill_id -> level).
+ */
+export function getUserMasteryRecords(userId) {
+  return db.prepare(`
+    SELECT skill_id, level
+    FROM mastery_records
+    WHERE user_id = ?
+  `).all(userId);
+}
+
+/**
+ * Mapping of skill id to the programming concept it represents. Only skills
+ * with a corresponding concept are leveled up through verified challenge
+ * results. Other skills unlock via quest completion only.
+ */
+export const SKILL_CONCEPT_MAP = {
+  'skill-variables': 'variables',
+  'skill-control-flow': 'conditionals',
+  'skill-functions': 'functions',
+  'skill-arrays': 'arrays',
+  'skill-objects': 'dictionaries',
+};
+
+/**
+ * Prerequisite skill ids per skill, matching the client skill tree definition.
+ */
+export const SKILL_PREREQS = {
+  'skill-control-flow': ['skill-variables'],
+  'skill-functions': ['skill-control-flow'],
+  'skill-arrays': ['skill-functions'],
+  'skill-objects': ['skill-functions'],
+  'skill-linked-lists': ['skill-arrays', 'skill-objects'],
+  'skill-stacks-queues': ['skill-arrays'],
+  'skill-searching': ['skill-arrays'],
+  'skill-sorting': ['skill-arrays'],
+  'skill-trees': ['skill-linked-lists', 'skill-searching'],
+  'skill-graphs': ['skill-trees'],
+  'skill-dp': ['skill-graphs'],
+  'skill-dom': ['skill-objects'],
+  'skill-async': ['skill-dom'],
+};
+
+/**
+ * Sync skill levels with verified concept mastery. A skill levels up only when
+ * its prerequisite skills are unlocked and the linked concept mastery justifies
+ * it. Never levels a skill beyond its max level (5). Skills without a concept
+ * mapping keep their quest-unlocked level.
+ */
+export function syncSkillLevelsFromMastery(userId, now) {
+  const skills = getUserMasteryRecords(userId);
+  const conceptRows = getUserConceptMastery(userId);
+  const conceptMap = {};
+  for (const row of conceptRows) {
+    conceptMap[row.concept_id] = row.mastery_level;
+  }
+
+  const MAX_LEVEL = 5;
+  const levels = {};
+  for (const s of skills) {
+    levels[s.skill_id] = s.level;
+  }
+
+  // Iterative fixpoint so prerequisite chains resolve in dependency order.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const s of skills) {
+      const skillId = s.skill_id;
+      const prereqs = SKILL_PREREQS[skillId] || [];
+      const prereqsMet =
+        prereqs.length === 0 ||
+        prereqs.every((p) => (levels[p] || 0) > 0);
+
+      let newLevel = levels[skillId];
+      if (prereqsMet) {
+        const conceptId = SKILL_CONCEPT_MAP[skillId];
+        if (conceptId) {
+          // Skill level is at least what it already is; concept mastery can only raise it.
+          newLevel = Math.max(levels[skillId], Math.min(conceptMap[conceptId] || 0, MAX_LEVEL));
+        }
+        // Unmapped skills keep their existing (quest-unlocked) level.
+      } else {
+        newLevel = 0;
+      }
+
+      if (newLevel !== levels[skillId]) {
+        levels[skillId] = newLevel;
+        changed = true;
+      }
+    }
+  }
+
+  for (const s of skills) {
+    if (levels[s.skill_id] !== s.level) {
+      db.prepare(`
+        UPDATE mastery_records
+        SET level = ?, updated_at = ?
+        WHERE user_id = ? AND skill_id = ?
+      `).run(levels[s.skill_id], now, userId, s.skill_id);
+    }
+  }
+
+  return levels;
 }
 
 /**
@@ -813,30 +936,14 @@ export function claimRewardChest(userId) {
         xpNeeded = Math.round(1500 + level * 150 + Math.pow(level, 1.4) * 20);
       }
       
-      const rankThresholds = [
-        { rank: 'E-Rank', minLevel: 1 },
-        { rank: 'D-Rank', minLevel: 10 },
-        { rank: 'C-Rank', minLevel: 20 },
-        { rank: 'B-Rank', minLevel: 35 },
-        { rank: 'A-Rank', minLevel: 50 },
-        { rank: 'S-Rank', minLevel: 70 },
-        { rank: 'National Level', minLevel: 90 },
-        { rank: 'Monarch', minLevel: 100 },
-      ];
-      
-      let newRank = 'E-Rank';
-      for (const t of rankThresholds) {
-        if (level >= t.minLevel) newRank = t.rank;
-      }
-      
-      const rankChanged = newRank !== profile.rank;
+      // Preserve existing rank — rank only changes via promotion trials
       const completedCount = profile.quests_completed + 1;
       
       db.prepare(`
         UPDATE profiles
-        SET level = ?, xp = ?, xp_to_next_level = ?, rank = ?, quests_completed = ?, updated_at = ?
+        SET level = ?, xp = ?, xp_to_next_level = ?, quests_completed = ?, updated_at = ?
         WHERE user_id = ?
-      `).run(level, xp, xpNeeded, newRank, completedCount, now, userId);
+      `).run(level, xp, xpNeeded, completedCount, now, userId);
     }
     
     db.exec('COMMIT');

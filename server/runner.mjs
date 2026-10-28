@@ -1,7 +1,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { initDatabase, db, hasMasteredPrerequisites, updateConceptMastery, recordChallengeMastery, getUserConceptMastery, getUserMasteredChallenges, getOrGenerateDailyQuests, getRewardChest, claimRewardChest, getStreakData, getDailyQuestData, updateDailyQuestProgress } from './db.mjs';
+import { initDatabase, db, hasMasteredPrerequisites, updateConceptMastery, recordChallengeMastery, getUserConceptMastery, getUserMasteredChallenges, getUserMasteryRecords, syncSkillLevelsFromMastery, SKILL_CONCEPT_MAP, SKILL_PREREQS, getOrGenerateDailyQuests, getRewardChest, claimRewardChest, getStreakData, getDailyQuestData, updateDailyQuestProgress } from './db.mjs';
 import {
   registerUser,
   loginUser,
@@ -14,11 +14,27 @@ import {
   getDailyQuests,
   claimDailyChest,
   recordLearningActivity,
+  checkPromotionEligibility,
+  getUserPromotionState,
+  attemptPromotion,
+  getAllPromotionTrials,
 } from './auth.mjs';
 import { serverChallenges } from './challenges.mjs';
+import {
+  initDungeonTables,
+  getDungeonsForUser,
+  getDungeonForUser,
+  startDungeon,
+  recordDungeonChallengeCompletion,
+  recordDungeonChallengeAttempt,
+  validateDungeonChallengeAccess,
+  DUNGEON_MAP,
+} from './dungeons.mjs';
 
 // Initialize SQLite database & seed demo user
 initDatabase();
+// Initialize dungeon tables (idempotent)
+initDungeonTables();
 
 const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -727,6 +743,351 @@ const server = http.createServer(async (req, res) => {
       });
     } catch (err) {
       return sendJson(res, 500, { error: `Submission evaluation error: ${err.message}` });
+    }
+  }
+
+  // ─── Get User Skills with State ────────────────────────────────────
+  if (req.method === 'GET' && url.pathname === '/api/skills') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Unauthorized.' });
+    }
+
+    const skillRows = getUserMasteryRecords(session.id);
+    const conceptRows = getUserConceptMastery(session.id);
+    const conceptMap = {};
+    for (const row of conceptRows) {
+      conceptMap[row.concept_id] = row.mastery_level;
+    }
+    const masteredChallenges = getUserMasteredChallenges(session.id).map(r => r.challenge_id);
+
+    // Build skill state for each skill
+    const skills = skillRows.map(s => {
+      const skillId = s.skill_id;
+      const prereqs = SKILL_PREREQS[skillId] || [];
+      const prereqsMet = prereqs.length === 0 || prereqs.every(p => {
+        const prereqSkill = skillRows.find(sr => sr.skill_id === p);
+        return prereqSkill && prereqSkill.level > 0;
+      });
+
+      let state = 'locked';
+      let unlockReason = null;
+
+      if (!prereqsMet) {
+        state = 'locked';
+        const unmet = prereqs.filter(p => {
+          const ps = skillRows.find(sr => sr.skill_id === p);
+          return !ps || ps.level === 0;
+        });
+        unlockReason = `Requires: ${unmet.join(', ')}`;
+      } else if (s.level === 0) {
+        state = 'available';
+      } else if (s.level >= 5) {
+        state = 'mastered';
+      } else {
+        state = 'in-progress';
+      }
+
+      const conceptId = SKILL_CONCEPT_MAP[skillId];
+      let conceptMasteryLevel = 0;
+      if (conceptId && conceptMap[conceptId]) {
+        conceptMasteryLevel = conceptMap[conceptId];
+      }
+
+      return {
+        id: skillId,
+        level: s.level,
+        maxLevel: 5,
+        state,
+        unlockReason,
+        conceptId: conceptId || null,
+        conceptMasteryLevel,
+        prerequisiteIds: prereqs,
+      };
+    });
+
+    return sendJson(res, 200, { skills });
+  }
+
+  // ─── Get Promotion Trials ────────────────────────────────────────
+  if (req.method === 'GET' && url.pathname === '/api/promotion/trials') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Unauthorized.' });
+    }
+
+    const trials = getUserPromotionState(session.id);
+    return sendJson(res, 200, { trials });
+  }
+
+  // ─── Attempt Promotion Trial ─────────────────────────────────────
+  if (req.method === 'POST' && url.pathname === '/api/promotion/trial/attempt') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+
+    try {
+      const payload = await readJsonBody();
+      const { trialId, code } = payload;
+
+      if (!trialId || typeof code !== 'string') {
+        return sendJson(res, 400, { error: 'Missing trialId or code.' });
+      }
+      if (code.length > MAX_CODE_LENGTH) {
+        return sendJson(res, 400, { error: 'Source code exceeds the maximum allowed length.' });
+      }
+
+      const result = await attemptPromotion(
+        session.id,
+        trialId,
+        code,
+        executeInPythonProcess,
+        buildHarnessScript
+      );
+      
+      // If promotion succeeded, refresh profile
+      if (result.success && result.profile) {
+        const full = getUserFullProgression(session.id);
+        return sendJson(res, 200, { ...result, profile: full.profile });
+      }
+
+      const isClientError = result.errorType === 'requirements_not_met' ||
+                            result.errorType === 'not_eligible' ||
+                            result.errorType === 'invalid_trial' ||
+                            result.errorType === 'challenge_not_found';
+      return sendJson(res, isClientError ? 400 : 200, result);
+    } catch (err) {
+      return sendJson(res, 500, { error: `Promotion trial error: ${err.message}` });
+    }
+  }
+
+  // ─── Dungeons: List All Dungeons for User ───────────────────────────────
+  if (req.method === 'GET' && url.pathname === '/api/dungeons') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Unauthorized.' });
+    }
+    const dungeons = getDungeonsForUser(session.id);
+    return sendJson(res, 200, { dungeons });
+  }
+
+  // ─── Dungeons: Get Single Dungeon ────────────────────────────────────────
+  const dungeonDetailMatch = url.pathname.match(/^\/api\/dungeons\/([a-z0-9-]+)$/);
+  if (req.method === 'GET' && dungeonDetailMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Unauthorized.' });
+    }
+    const dungeonId = dungeonDetailMatch[1];
+    const dungeon = getDungeonForUser(session.id, dungeonId);
+    if (!dungeon) return sendJson(res, 404, { error: 'Dungeon not found.' });
+    return sendJson(res, 200, { dungeon });
+  }
+
+  // ─── Dungeons: Start a Dungeon ────────────────────────────────────────────
+  const dungeonStartMatch = url.pathname.match(/^\/api\/dungeons\/([a-z0-9-]+)\/start$/);
+  if (req.method === 'POST' && dungeonStartMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Unauthorized.' });
+    }
+    const dungeonId = dungeonStartMatch[1];
+    const result = startDungeon(session.id, dungeonId);
+    if (!result.success) return sendJson(res, 400, { error: result.error });
+    const dungeon = getDungeonForUser(session.id, dungeonId);
+    return sendJson(res, 200, { ...result, dungeon });
+  }
+
+  // ─── Dungeons: Run Code (Sample Tests, No XP) ────────────────────────────
+  const dungeonRunMatch = url.pathname.match(/^\/api\/dungeons\/([a-z0-9-]+)\/challenge\/([a-z0-9-]+)\/run$/);
+  if (req.method === 'POST' && dungeonRunMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    try {
+      const [, dungeonId, challengeId] = dungeonRunMatch;
+      const payload = await readJsonBody();
+      const { code } = payload;
+      if (typeof code !== 'string') return sendJson(res, 400, { error: 'Missing code.' });
+      if (code.length > MAX_CODE_LENGTH) return sendJson(res, 400, { error: 'Code too long.' });
+
+      // Validate access
+      const access = validateDungeonChallengeAccess(session.id, dungeonId, challengeId);
+      if (!access.allowed) return sendJson(res, 403, { error: access.reason });
+
+      const challenge = serverChallenges[challengeId];
+      if (!challenge) return sendJson(res, 404, { error: 'Challenge not found.' });
+
+      const script = buildHarnessScript(code, challenge.functionName, challenge.sampleTests);
+      const evalResult = await executeInPythonProcess(script);
+
+      return sendJson(res, 200, {
+        success: evalResult.success,
+        allPassed: evalResult.allPassed,
+        passedCount: evalResult.results.filter((r) => r.passed).length,
+        totalCount: evalResult.results.length,
+        results: evalResult.results,
+        stdout: evalResult.stdout,
+        error: evalResult.error,
+        durationMs: evalResult.durationMs,
+        isSubmission: false,
+        xpReward: 0,
+      });
+    } catch (err) {
+      return sendJson(res, 500, { error: `Runner error: ${err.message}` });
+    }
+  }
+
+  // ─── Dungeons: Submit Solution (Hidden Tests + Atomic XP if passes) ──────
+  const dungeonSubmitMatch = url.pathname.match(/^\/api\/dungeons\/([a-z0-9-]+)\/challenge\/([a-z0-9-]+)\/submit$/);
+  if (req.method === 'POST' && dungeonSubmitMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+
+    try {
+      const [, dungeonId, challengeId] = dungeonSubmitMatch;
+      const payload = await readJsonBody();
+      const { code } = payload;
+      if (typeof code !== 'string') return sendJson(res, 400, { error: 'Missing code.' });
+      if (code.length > MAX_CODE_LENGTH) return sendJson(res, 400, { error: 'Code too long.' });
+
+      // Server-side access validation — prerequisites, rank, challenge unlock order
+      const access = validateDungeonChallengeAccess(session.id, dungeonId, challengeId);
+      if (!access.allowed) return sendJson(res, 403, { error: access.reason });
+
+      const challenge = serverChallenges[challengeId];
+      if (!challenge) return sendJson(res, 404, { error: 'Challenge not found.' });
+
+      // Run sample + hidden tests
+      const testCasesToRun = [
+        ...challenge.sampleTests.map((t) => ({ ...t, isHidden: false })),
+        ...challenge.hiddenTests.map((t) => ({ ...t, isHidden: true })),
+      ];
+      const script = buildHarnessScript(code, challenge.functionName, testCasesToRun);
+      const evalResult = await executeInPythonProcess(script);
+
+      // Sanitize hidden test results
+      const sanitizedResults = evalResult.results.map((r) => {
+        if (r.isHidden) {
+          return {
+            index: r.index,
+            description: `Hidden Test #${r.index}`,
+            passed: r.passed,
+            isHidden: true,
+            executionTimeMs: r.executionTimeMs,
+            error: r.error ? (r.error.split('\n')[0] || 'Error') : null,
+            expected: '🔒 Hidden',
+            actual: r.passed ? '🔒 Passed' : '🔒 Did not match',
+          };
+        }
+        return r;
+      });
+
+      const passedCount = evalResult.results.filter((r) => r.passed).length;
+      const totalCount = evalResult.results.length;
+      const allPassed = evalResult.allPassed && passedCount === totalCount;
+      const errorInfo = categorizeError(evalResult);
+
+      // Record submission in submissions table
+      db.prepare(`
+        INSERT INTO submissions
+          (id, user_id, challenge_id, quest_id, code, passed, passed_count, total_count, results_json, stdout, error, duration_ms, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        `sub_${crypto.randomUUID()}`,
+        session.id,
+        challengeId,
+        `dungeon-${dungeonId}`,
+        code,
+        allPassed ? 1 : 0,
+        passedCount,
+        totalCount,
+        JSON.stringify(sanitizedResults),
+        evalResult.stdout,
+        evalResult.error,
+        evalResult.durationMs,
+        new Date().toISOString()
+      );
+
+      if (allPassed) {
+        // Server-side: record completion, unlock next challenge, award XP
+        const completionResult = recordDungeonChallengeCompletion(
+          session.id,
+          dungeonId,
+          challengeId,
+          { allPassed: true, results: evalResult.results }
+        );
+
+        // Also track concept mastery for the main quest system
+        if (challenge.conceptId) {
+          updateConceptMastery(session.id, challenge.conceptId, 3);
+        }
+        // Record challenge mastery (first completion)
+        recordChallengeMastery(session.id, challengeId, `dungeon-${dungeonId}`);
+        // Record learning activity for streak/daily
+        recordLearningActivity(session.id, 'main_challenge', challengeId);
+        if (challenge.conceptId) {
+          recordLearningActivity(session.id, 'concept_mastery', challenge.conceptId);
+        }
+
+        const updatedDungeon = getDungeonForUser(session.id, dungeonId);
+        const fullProgression = getUserFullProgression(session.id);
+
+        return sendJson(res, 200, {
+          success: true,
+          allPassed: true,
+          passedCount,
+          totalCount,
+          results: sanitizedResults,
+          stdout: evalResult.stdout,
+          error: null,
+          errorType: null,
+          durationMs: evalResult.durationMs,
+          isSubmission: true,
+          xpReward: completionResult.xpAwarded || 0,
+          isDuplicate: completionResult.isDuplicate,
+          dungeonComplete: completionResult.dungeonComplete,
+          dungeonXpAwarded: completionResult.xpAwarded || 0,
+          nextUnlocked: completionResult.nextUnlocked,
+          isBoss: completionResult.isBoss,
+          bonusTitle: completionResult.bonusTitle,
+          dungeon: updatedDungeon,
+          player: fullProgression.profile,
+        });
+      }
+
+      // Failed attempt — record attempt count, return feedback
+      recordDungeonChallengeAttempt(session.id, dungeonId, challengeId, passedCount, totalCount);
+      const updatedDungeon = getDungeonForUser(session.id, dungeonId);
+
+      return sendJson(res, 200, {
+        success: false,
+        allPassed: false,
+        passedCount,
+        totalCount,
+        results: sanitizedResults,
+        stdout: evalResult.stdout,
+        error: errorInfo.message,
+        errorType: errorInfo.type,
+        durationMs: evalResult.durationMs,
+        isSubmission: true,
+        xpReward: 0,
+        dungeon: updatedDungeon,
+      });
+    } catch (err) {
+      return sendJson(res, 500, { error: `Dungeon submission error: ${err.message}` });
     }
   }
 

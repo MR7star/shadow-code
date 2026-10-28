@@ -128,6 +128,55 @@ export interface MasteryRecord {
   updated_at: string;
 }
 
+export type SkillState = 'locked' | 'available' | 'in-progress' | 'mastered';
+
+export interface SkillWithState extends Skill {
+  state: SkillState;
+  unlockReason: string | null;
+  conceptId?: string;
+  conceptMasteryLevel?: number;
+}
+
+export interface PromotionTrial {
+  id: string;
+  fromRank: Rank;
+  toRank: Rank;
+  title: string;
+  description: string;
+  requiredLevel: number;
+  requiredMasteredChallenges: string[];
+  requiredConceptMastery: Record<string, number>;
+  trialChallengeId: string;
+  xpReward: number;
+}
+
+export interface RankPromotion {
+  id: string;
+  fromRank: string;
+  toRank: string;
+  challengeId: string;
+  status: 'locked' | 'available' | 'in-progress' | 'completed' | 'failed';
+  attempts: number;
+  startedAt?: string;
+  completedAt?: string;
+  results?: any;
+}
+
+export interface PromotionTrialEligibility extends PromotionTrial {
+  status: RankPromotion['status'];
+  attempts: number;
+  startedAt?: string;
+  completedAt?: string;
+  results?: any;
+  eligible: boolean;
+  lockReason?: string;
+  levelMet: boolean;
+  challengesMet: boolean;
+  conceptsMet: boolean;
+  currentLevel: number;
+  currentRank: Rank;
+}
+
 // ─── Daily Quest Types ────────────────────────────────────────────
 
 export type DailyMissionType = 'main_challenge' | 'practice_challenge' | 'concept_mastery';
@@ -173,4 +222,75 @@ export interface DailyQuestData {
   chest: RewardChest;
   streak: StreakData;
   date: string;
+}
+
+// ─── Dungeon Types ────────────────────────────────────────────
+
+export type DungeonStatus = 'locked' | 'available' | 'in-progress' | 'completed';
+export type DungeonChallengeStatus = 'locked' | 'available' | 'completed';
+
+export interface DungeonChallenge {
+  id: string;
+  order: number;
+  isRequired: boolean;
+  isBoss: boolean;
+  stageTitle: string;
+  stageLore: string;
+  title: string;
+  xpReward: number;
+  functionName: string;
+  conceptId: string | null;
+  sampleTests: any[];
+  status: DungeonChallengeStatus;
+  attempts: number;
+  bestPassedCount: number;
+  bestTotalCount: number;
+  completedAt: string | null;
+}
+
+export interface Dungeon {
+  id: string;
+  name: string;
+  description: string;
+  theme: string;
+  difficulty: QuestDifficulty;
+  requiredRank: Rank;
+  requiredChallenges: string[];
+  lore: string;
+  xpReward: number;
+  bonusTitle: string;
+  status: DungeonStatus;
+  isAccessible: boolean;
+  lockReason: string | null;
+  challenges: DungeonChallenge[];
+  bossId: string | null;
+  bossStatus: DungeonChallengeStatus;
+  bossAttempts: number;
+  completedRequired: number;
+  totalRequired: number;
+  progressPercent: number;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface DungeonSubmitResult {
+  success: boolean;
+  allPassed: boolean;
+  passedCount: number;
+  totalCount: number;
+  results: any[];
+  stdout?: string;
+  error?: string | null;
+  errorType?: string | null;
+  durationMs?: number;
+  isSubmission: boolean;
+  xpReward: number;
+  isDuplicate?: boolean;
+  dungeonComplete?: boolean;
+  dungeonXpAwarded?: number;
+  nextUnlocked?: string | null;
+  isBoss?: boolean;
+  bonusTitle?: string | null;
+  dungeon?: Dungeon;
+  player?: any;
 }

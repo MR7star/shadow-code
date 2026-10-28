@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
-import { db, hashPassword, verifyPassword, getUserConceptMastery, getOrGenerateDailyQuests, getRewardChest, claimRewardChest, getStreakData, updateLearningStreak, getDailyQuestData, updateDailyQuestProgress } from './db.mjs';
+import { db, hashPassword, verifyPassword, getUserConceptMastery, getUserMasteredChallenges, getUserMasteryRecords, syncSkillLevelsFromMastery, getOrGenerateDailyQuests, getRewardChest, claimRewardChest, getStreakData, updateLearningStreak, getDailyQuestData, updateDailyQuestProgress } from './db.mjs';
+import { serverChallenges } from './challenges.mjs';
 
 const SESSION_TTL_HOURS = parseInt(process.env.SESSION_TTL_HOURS || '72', 10);
 
@@ -16,6 +17,83 @@ export const RANK_THRESHOLDS = [
   { rank: 'National Level', minLevel: 90, title: 'National Level Hunter' },
   { rank: 'Monarch', minLevel: 100, title: 'Shadow Monarch' },
 ];
+
+/**
+ * Promotion trial configuration — defines the requirements and challenge
+ * for advancing from one rank to the next. Each trial uses an existing
+ * challenge from serverChallenges as the gatekeeper challenge.
+ * Requirements reference the existing curriculum to avoid arbitrary values.
+ */
+export const PROMOTION_TRIALS = [
+  {
+    id: 'promo-e-d',
+    fromRank: 'E-Rank',
+    toRank: 'D-Rank',
+    title: 'The Gatekeeper Trial',
+    description: 'Prove your command of variables and conditional logic to earn D-Rank.',
+    requiredLevel: 10,
+    requiredMasteredChallenges: ['py-01'],
+    requiredConceptMastery: { variables: 2 },
+    trialChallengeId: 'py-02',
+    xpReward: 0,
+  },
+  {
+    id: 'promo-d-c',
+    fromRank: 'D-Rank',
+    toRank: 'C-Rank',
+    title: 'The C-Rank Advancement Trial',
+    description: 'Demonstrate loop mastery and soldier-count precision to rise to C-Rank.',
+    requiredLevel: 20,
+    requiredMasteredChallenges: ['py-02', 'py-04'],
+    requiredConceptMastery: { conditionals: 2, loops: 2 },
+    trialChallengeId: 'py-06',
+    xpReward: 0,
+  },
+  {
+    id: 'promo-c-b',
+    fromRank: 'C-Rank',
+    toRank: 'B-Rank',
+    title: 'The B-Rank Advancement Trial',
+    description: 'Breach the shadow extraction perimeter with array and dictionary precision.',
+    requiredLevel: 35,
+    requiredMasteredChallenges: ['py-06', 'py-08'],
+    requiredConceptMastery: { loops: 3, arrays: 2 },
+    trialChallengeId: 'py-07',
+    xpReward: 0,
+  },
+  {
+    id: 'promo-b-a',
+    fromRank: 'B-Rank',
+    toRank: 'A-Rank',
+    title: 'The A-Rank Advancement Trial',
+    description: 'Command higher-order functions and potion-brewing mappings to reach A-Rank.',
+    requiredLevel: 50,
+    requiredMasteredChallenges: ['py-07', 'py-08'],
+    requiredConceptMastery: { dictionaries: 3, functions: 2 },
+    trialChallengeId: 'py-09',
+    xpReward: 0,
+  },
+  {
+    id: 'promo-a-s',
+    fromRank: 'A-Rank',
+    toRank: 'S-Rank',
+    title: 'The S-Rank Advancement Trial',
+    description: 'Survive the Abyss Boss recursive power surge to claim S-Rank.',
+    requiredLevel: 70,
+    requiredMasteredChallenges: ['py-09'],
+    requiredConceptMastery: { functions: 3, recursion: 2 },
+    trialChallengeId: 'py-10',
+    xpReward: 0,
+  },
+];
+
+export function getPromotionTrial(fromRank) {
+  return PROMOTION_TRIALS.find(t => t.fromRank === fromRank) || null;
+}
+
+export function getAllPromotionTrials() {
+  return PROMOTION_TRIALS;
+}
 
 export function getRankAndTitleForLevel(level) {
   let matched = RANK_THRESHOLDS[0];
@@ -450,6 +528,9 @@ export function awardQuestCompletionAtomic(userId, questId, xpReward) {
 
     applySkillUnlocks(userId, questId, now);
 
+    // Sync skill levels with verified concept mastery
+    syncSkillLevelsFromMastery(userId, now);
+
     let level = profile.level;
     let xp = profile.xp + safeXp;
     let xpNeeded = profile.xp_to_next_level;
@@ -462,8 +543,7 @@ export function awardQuestCompletionAtomic(userId, questId, xpReward) {
       xpNeeded = getXpRequiredForLevel(level);
     }
 
-    const { rank: newRank, title: newTitle } = getRankAndTitleForLevel(level);
-    const rankChanged = newRank !== profile.rank;
+    // Preserve existing rank and title — rank only changes via promotion trials
     const completedCount = profile.quests_completed + 1;
     const skillsUnlocked = db.prepare(`
       SELECT COUNT(*) as c FROM mastery_records WHERE user_id = ? AND level > 0
@@ -471,9 +551,9 @@ export function awardQuestCompletionAtomic(userId, questId, xpReward) {
 
     db.prepare(`
       UPDATE profiles
-      SET level = ?, xp = ?, xp_to_next_level = ?, rank = ?, title = ?, quests_completed = ?, skills_unlocked = ?, updated_at = ?
+      SET level = ?, xp = ?, xp_to_next_level = ?, quests_completed = ?, skills_unlocked = ?, updated_at = ?
       WHERE user_id = ?
-    `).run(level, xp, xpNeeded, newRank, newTitle, completedCount, skillsUnlocked, now, userId);
+    `).run(level, xp, xpNeeded, completedCount, skillsUnlocked, now, userId);
 
     const updatedProfile = parseProfileRow(
       db.prepare('SELECT * FROM profiles WHERE user_id = ?').get(userId)
@@ -487,7 +567,7 @@ export function awardQuestCompletionAtomic(userId, questId, xpReward) {
       profile: updatedProfile,
       leveledUp: levelsGained > 0,
       newLevel: level,
-      rankChanged,
+      rankChanged: false,
     };
   } catch (err) {
     try {
@@ -575,6 +655,353 @@ export function getLeaderboard() {
 }
 
 /**
+ * Check if user meets all requirements for a promotion trial.
+ * Returns { eligible: boolean, reasons: string[] }.
+ */
+export function checkPromotionEligibility(userId, trial) {
+  const reasons = [];
+
+  // Check level
+  const profile = db.prepare('SELECT level FROM profiles WHERE user_id = ?').get(userId);
+  if (!profile || profile.level < trial.requiredLevel) {
+    reasons.push(`Requires Hunter Level ${trial.requiredLevel} (current: ${profile?.level || 1})`);
+  }
+
+  // Check mastered challenges
+  const masteredChallenges = getUserMasteredChallenges(userId).map(r => r.challenge_id);
+  for (const req of trial.requiredMasteredChallenges) {
+    if (!masteredChallenges.includes(req)) {
+      reasons.push(`Requires mastery of challenge: ${req}`);
+    }
+  }
+
+  // Check concept mastery
+  const conceptRows = getUserConceptMastery(userId);
+  const conceptMap = {};
+  for (const row of conceptRows) {
+    conceptMap[row.concept_id] = row.mastery_level;
+  }
+  for (const [concept, requiredLevel] of Object.entries(trial.requiredConceptMastery)) {
+    const current = conceptMap[concept] || 0;
+    if (current < requiredLevel) {
+      reasons.push(`Requires ${concept} mastery level ${requiredLevel} (current: ${current})`);
+    }
+  }
+
+  return {
+    eligible: reasons.length === 0,
+    reasons,
+  };
+}
+
+/**
+ * Get the promotion state for all trials for a user.
+ */
+export function getUserPromotionState(userId) {
+  const profile = db.prepare('SELECT rank, level FROM profiles WHERE user_id = ?').get(userId);
+  if (!profile) return [];
+
+  const promotionRows = db.prepare(`
+    SELECT * FROM rank_promotions WHERE user_id = ?
+  `).all(userId);
+  const promotionMap = {};
+  for (const row of promotionRows) {
+    promotionMap[row.from_rank] = row;
+  }
+
+  const masteredChallenges = getUserMasteredChallenges(userId).map(r => r.challenge_id);
+  const conceptRows = getUserConceptMastery(userId);
+  const conceptMap = {};
+  for (const row of conceptRows) {
+    conceptMap[row.concept_id] = row.mastery_level;
+  }
+
+  return PROMOTION_TRIALS.map(trial => {
+    const promoRow = promotionMap[trial.fromRank];
+    const isCurrentRank = trial.fromRank === profile.rank;
+    const isFutureRank = RANK_THRESHOLDS.findIndex(t => t.rank === trial.fromRank) > RANK_THRESHOLDS.findIndex(t => t.rank === profile.rank);
+
+    let status = 'locked';
+    let attempts = 0;
+    let startedAt = null;
+    let completedAt = null;
+    let resultsJson = null;
+
+    // Check requirements
+    const levelMet = profile.level >= trial.requiredLevel;
+    const challengesMet = trial.requiredMasteredChallenges.every(req => masteredChallenges.includes(req));
+    const conceptsMet = Object.entries(trial.requiredConceptMastery).every(([c, lvl]) => (conceptMap[c] || 0) >= lvl);
+    const eligible = levelMet && challengesMet && conceptsMet;
+
+    if (promoRow) {
+      status = promoRow.status;
+      attempts = promoRow.attempts;
+      startedAt = promoRow.started_at;
+      completedAt = promoRow.completed_at;
+      resultsJson = promoRow.results_json;
+    } else if (isCurrentRank) {
+      status = eligible ? 'available' : 'locked';
+    } else if (isFutureRank) {
+      status = 'locked';
+    }
+
+    let lockReason = null;
+    if (!eligible && isCurrentRank) {
+      if (!levelMet) lockReason = `Requires Level ${trial.requiredLevel}`;
+      else if (!challengesMet) {
+        const unmet = trial.requiredMasteredChallenges.filter(req => !masteredChallenges.includes(req));
+        lockReason = `Requires mastery: ${unmet.join(', ')}`;
+      } else {
+        const unmet = Object.entries(trial.requiredConceptMastery)
+          .filter(([c, lvl]) => (conceptMap[c] || 0) < lvl)
+          .map(([c, lvl]) => `${c} Lv.${lvl}`);
+        lockReason = `Requires mastery: ${unmet.join(', ')}`;
+      }
+    }
+
+    return {
+      ...trial,
+      status,
+      attempts,
+      startedAt,
+      completedAt,
+      results: resultsJson ? JSON.parse(resultsJson) : null,
+      eligible: isCurrentRank && eligible,
+      lockReason: isCurrentRank ? lockReason : (isFutureRank ? 'Complete previous rank trial first' : null),
+      levelMet,
+      challengesMet,
+      conceptsMet,
+      currentLevel: profile.level,
+      currentRank: profile.rank,
+    };
+  });
+}
+
+/**
+ * Attempt a promotion trial - run the trial challenge's hidden tests.
+ * If passed, atomically promote the user's rank.
+ * Returns { success, allPassed, newRank, fromRank, toRank, results, attempts, error, errorType }.
+ */
+export async function attemptPromotion(userId, trialId, code, executeFn, buildHarnessFn) {
+  const trial = PROMOTION_TRIALS.find(t => t.id === trialId);
+  if (!trial) {
+    return { success: false, error: 'Invalid promotion trial', errorType: 'invalid_trial' };
+  }
+
+  // Check if already promoted for this trial (idempotency guard for duplicate requests)
+  const existingPromo = db.prepare(`
+    SELECT status, results_json FROM rank_promotions WHERE user_id = ? AND from_rank = ?
+  `).get(userId, trial.fromRank);
+  if (existingPromo && existingPromo.status === 'completed') {
+    const finalProfile = db.prepare('SELECT * FROM profiles WHERE user_id = ?').get(userId);
+    let parsedResults = [];
+    try { parsedResults = JSON.parse(existingPromo.results_json || '[]'); } catch {}
+    return {
+      success: true,
+      allPassed: true,
+      newRank: finalProfile ? finalProfile.rank : trial.toRank,
+      fromRank: trial.fromRank,
+      toRank: trial.toRank,
+      alreadyCompleted: true,
+      results: parsedResults,
+      passedCount: parsedResults.filter((r) => r.passed).length,
+      totalCount: parsedResults.length,
+      profile: finalProfile ? {
+        rank: finalProfile.rank,
+        title: finalProfile.title,
+        level: finalProfile.level,
+        xp: finalProfile.xp,
+      } : null,
+    };
+  }
+
+  // Verify user's current rank matches trial's fromRank
+  const profile = db.prepare('SELECT rank, level FROM profiles WHERE user_id = ?').get(userId);
+  if (!profile || profile.rank !== trial.fromRank) {
+    return { success: false, error: 'You are not eligible for this trial', errorType: 'not_eligible' };
+  }
+
+  // Check eligibility
+  const eligibility = checkPromotionEligibility(userId, trial);
+  if (!eligibility.eligible) {
+    return { success: false, error: 'Requirements not met', errorType: 'requirements_not_met', reasons: eligibility.reasons };
+  }
+
+  // Get the trial challenge
+  const challenge = serverChallenges[trial.trialChallengeId];
+  if (!challenge) {
+    return { success: false, error: 'Trial challenge not found', errorType: 'challenge_not_found' };
+  }
+
+  // Build test cases (sample + hidden)
+  const testCases = [
+    ...challenge.sampleTests.map(t => ({ ...t, isHidden: false })),
+    ...challenge.hiddenTests.map(t => ({ ...t, isHidden: true })),
+  ];
+
+  try {
+    let exec = executeFn;
+    let buildScript = buildHarnessFn;
+    if (!exec || !buildScript) {
+      const runner = await import('./runner.mjs');
+      exec = runner.executeInPythonProcess;
+      buildScript = runner.buildHarnessScript;
+    }
+
+    const script = buildScript(code, challenge.functionName, testCases);
+    const evalResult = await exec(script);
+
+    const allPassed = evalResult.allPassed && evalResult.results.every(r => r.passed);
+    const passedCount = evalResult.results ? evalResult.results.filter(r => r.passed).length : 0;
+    const totalCount = evalResult.results ? evalResult.results.length : 0;
+    const now = new Date().toISOString();
+
+    if (allPassed) {
+      // Atomic promotion transaction
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        // Re-verify rank hasn't changed
+        const currentProfile = db.prepare('SELECT rank FROM profiles WHERE user_id = ?').get(userId);
+        if (!currentProfile || currentProfile.rank !== trial.fromRank) {
+          db.exec('ROLLBACK');
+          return {
+            success: false,
+            error: 'Rank already changed, cannot promote',
+            errorType: 'rank_changed',
+          };
+        }
+
+        // Check if already promoted for this trial (idempotency)
+        const existingPromo = db.prepare(`
+          SELECT status FROM rank_promotions WHERE user_id = ? AND from_rank = ?
+        `).get(userId, trial.fromRank);
+        if (existingPromo && existingPromo.status === 'completed') {
+          db.exec('COMMIT');
+          // Already completed, return success with current rank
+          const finalProfile = db.prepare('SELECT * FROM profiles WHERE user_id = ?').get(userId);
+          return {
+            success: true,
+            allPassed: true,
+            newRank: finalProfile.rank,
+            fromRank: trial.fromRank,
+            toRank: trial.toRank,
+            alreadyCompleted: true,
+            results: evalResult.results,
+            passedCount,
+            totalCount,
+          };
+        }
+
+        // Get rank title for new rank
+        const { title: newTitle } = getRankAndTitleForLevel(profile.level);
+
+        // Update profile rank and title (preserve XP, level, everything else)
+        db.prepare(`
+          UPDATE profiles
+          SET rank = ?, title = ?, updated_at = ?
+          WHERE user_id = ?
+        `).run(trial.toRank, newTitle, now, userId);
+
+        // Upsert promotion record
+        if (existingPromo) {
+          db.prepare(`
+            UPDATE rank_promotions
+            SET status = 'completed', attempts = attempts + 1, completed_at = ?, results_json = ?, updated_at = ?
+            WHERE user_id = ? AND from_rank = ?
+          `).run(now, JSON.stringify(evalResult.results), now, userId, trial.fromRank);
+        } else {
+          db.prepare(`
+            INSERT INTO rank_promotions (id, user_id, from_rank, to_rank, challenge_id, status, attempts, started_at, completed_at, results_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'completed', 1, ?, ?, ?, ?, ?)
+          `).run(`rp_${userId}_${trial.fromRank}`, userId, trial.fromRank, trial.toRank, trial.trialChallengeId, now, now, JSON.stringify(evalResult.results), now, now);
+        }
+
+        db.exec('COMMIT');
+
+        const finalProfile = db.prepare('SELECT * FROM profiles WHERE user_id = ?').get(userId);
+        return {
+          success: true,
+          allPassed: true,
+          newRank: finalProfile.rank,
+          fromRank: trial.fromRank,
+          toRank: trial.toRank,
+          results: evalResult.results,
+          passedCount,
+          totalCount,
+          profile: {
+            rank: finalProfile.rank,
+            title: finalProfile.title,
+            level: finalProfile.level,
+            xp: finalProfile.xp,
+          },
+        };
+      } catch (err) {
+        try { db.exec('ROLLBACK'); } catch {}
+        throw err;
+      }
+    } else {
+      // Failed attempt - record it
+      const existingPromo = db.prepare(`
+        SELECT id FROM rank_promotions WHERE user_id = ? AND from_rank = ?
+      `).get(userId, trial.fromRank);
+      const now = new Date().toISOString();
+      
+      if (existingPromo) {
+        db.prepare(`
+          UPDATE rank_promotions
+          SET attempts = attempts + 1, status = 'in-progress', updated_at = ?, results_json = ?
+          WHERE id = ?
+        `).run(now, JSON.stringify(evalResult.results), existingPromo.id);
+      } else {
+        db.prepare(`
+          INSERT INTO rank_promotions (id, user_id, from_rank, to_rank, challenge_id, status, attempts, started_at, results_json, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, 'in-progress', 1, ?, ?, ?, ?)
+        `).run(`rp_${userId}_${trial.fromRank}`, userId, trial.fromRank, trial.toRank, trial.trialChallengeId, now, JSON.stringify(evalResult.results), now, now);
+      }
+
+      const errorInfo = categorizeRunnerError(evalResult);
+      return {
+        success: false,
+        allPassed: false,
+        passedCount,
+        totalCount,
+        results: evalResult.results,
+        error: errorInfo.message,
+        errorType: errorInfo.type,
+        attempts: (existingPromo?.attempts || 0) + 1,
+      };
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: `Promotion trial error: ${err.message}`,
+      errorType: 'internal_error',
+    };
+  }
+}
+
+// Helper to categorize runner errors (duplicated from runner for server-side use)
+function categorizeRunnerError(evalResult) {
+  if (!evalResult.success) {
+    if (evalResult.error && evalResult.error.includes('Time Limit Exceeded')) {
+      return { type: 'timeout', message: 'Time Limit Exceeded: Your code took too long to execute.' };
+    }
+    if (evalResult.error && (evalResult.error.includes('SyntaxError') || evalResult.error.includes('IndentationError'))) {
+      return { type: 'syntax', message: `Syntax Error: ${evalResult.error.split('\n')[0]}` };
+    }
+    return { type: 'runtime', message: `Runtime Error: ${evalResult.error?.split('\n')[0] || 'Unknown error'}` };
+  }
+  if (!evalResult.allPassed) {
+    const failedTest = evalResult.results.find(r => !r.passed);
+    if (failedTest?.error) {
+      return { type: 'runtime', message: `Runtime Error on test "${failedTest.description}": ${failedTest.error.split('\n')[0]}` };
+    }
+    return { type: 'incorrect_output', message: `Incorrect Output: Test "${failedTest?.description || 'unknown'}" failed.` };
+  }
+  return { type: 'success', message: 'All tests passed!' };
+}
+
+/**
  * Get daily quest data for user (quests, chest, streak)
  */
 export function getDailyQuests(userId) {
@@ -602,4 +1029,297 @@ export function recordLearningActivity(userId, activityType, targetId) {
   }
   
   return { streak: streakResult, questProgress };
+}
+
+/**
+ * Learning profile — analyzes a user's submission history, concept mastery,
+ * and skill levels to determine strengths, weaknesses, and recommendations.
+ */
+export function getLearningProfile(userId) {
+  const profile = db.prepare('SELECT * FROM profiles WHERE user_id = ?').get(userId);
+  if (!profile) return null;
+
+  const conceptMastery = getUserConceptMastery(userId);
+  const conceptMap = {};
+  for (const row of conceptMastery) {
+    conceptMap[row.concept_id] = row.mastery_level;
+  }
+
+  const skillRecords = db.prepare('SELECT skill_id, level FROM mastery_records WHERE user_id = ?').all(userId);
+  const skillMap = {};
+  for (const row of skillRecords) {
+    skillMap[row.skill_id] = row.level;
+  }
+
+  const masteredChallenges = getUserMasteredChallenges(userId);
+  const masteredChallengeIds = new Set(masteredChallenges.map(r => r.challenge_id));
+
+  const submissions = db.prepare(`
+    SELECT challenge_id, passed, passed_count, total_count, created_at
+    FROM submissions
+    WHERE user_id = ?
+    ORDER BY created_at DESC
+  `).all(userId);
+
+  // Calculate per-concept success rates from mastery data
+  const allConcepts = ['variables', 'conditionals', 'strings', 'loops', 'arrays', 'functions', 'dictionaries', 'recursion'];
+  const fixedConceptStats = {};
+  allConcepts.forEach(c => {
+    fixedConceptStats[c] = { submissions: 0, passed: 0, successRate: 0 };
+  });
+  for (const [concept, level] of Object.entries(conceptMap)) {
+    if (fixedConceptStats[concept]) {
+      fixedConceptStats[concept].subscriptions += 1;
+      if (level >= 3) {
+        fixedConceptStats[concept].passed += 1;
+      }
+    }
+  }
+  for (const c of Object.keys(fixedConceptStats)) {
+    const fs = fixedConceptStats[c];
+    fs.successRate = fs.subscriptions > 0 ? fs.passed / fs.subscriptions : 0;
+  }
+
+  // Determine weak and strong concepts
+  const weakConcepts = [];
+  const strongConcepts = [];
+  for (const c of allConcepts) {
+    const fs = fixedConceptStats[c];
+    if (fs.successRate < 0.5 || (fs.subscriptions > 0 && (conceptMap[c] || 0) < 3)) {
+      weakConcepts.push(c);
+    }
+    if (fs.successRate >= 0.8 && (conceptMap[c] || 0) >= 4) {
+      strongConcepts.push(c);
+    }
+  }
+
+  // Determine recent attempt patterns
+  const recentAttempts = {};
+  submissions.slice(0, 20).forEach(s => {
+    const cid = s.challenge_id;
+    if (!recentAttempts[cid]) {
+      recentAttempts[cid] = { attempts: 0, passed: 0, lastStatus: null };
+    }
+    recentAttempts[cid].attempts += 1;
+    if (s.passed) {
+      recentAttempts[cid].passed += 1;
+    }
+    if (s.total_count > 0) {
+      const rate = s.passed_count / s.total_count;
+      if (recentAttempts[cid].lastStatus === null || rate > recentAttempts[cid].lastStatus) {
+        recentAttempts[cid].lastStatus = rate;
+      }
+    } else if (s.passed) {
+      recentAttempts[cid].lastStatus = 1;
+    }
+  });
+
+  // Count unlocked skills
+  const skillsUnlocked = Object.values(skillMap).filter(l => l > 0).length;
+
+  // Strategy 1: If there are weak concepts, recommend practice for those
+  let recommendedChallengeId = null;
+  let recommendationReason = '';
+  let strengths = [];
+  let needsPractice = [];
+
+  if (weakConcepts.length > 0) {
+    // Find practice challenges for weak concepts
+    const practiceForWeak = [];
+    for (const c of weakConcepts) {
+      // Find main challenges with this concept
+      const mainChallenges = Object.entries(serverChallenges).filter(([id, info]) => info.conceptId === c && !id.includes('-practice'));
+      for (const [id, info] of mainChallenges) {
+        if (!masteredChallengeIds.has(id)) {
+          practiceForWeak.push({ id, concept: info.conceptId, difficulty: 'main' });
+        }
+      }
+      // Also find practice challenges
+      const practiceChallenges = Object.entries(serverChallenges).filter(([id, info]) => info.conceptId === c && id.includes('-practice'));
+      for (const [id, info] of practiceChallenges) {
+        const mainId = id.replace('-practice', '');
+        if (!masteredChallengeIds.has(mainId)) {
+          practiceForWeak.push({ id, concept: info.conceptId, difficulty: 'practice' });
+        }
+      }
+    }
+    // Sort by difficulty (easy first for weak concepts)
+    const diffOrder = { easy: 1, medium: 2, hard: 3 };
+    practiceForWeak.sort((a, b) => (diffOrder[a.difficulty] || 0) - (diffOrder[b.difficulty] || 0));
+    if (practiceForWeak.length > 0) {
+      recommendedChallengeId = practiceForWeak[0].id;
+      recommendationReason = `Practice ${recommendedChallengeId} to strengthen ${practiceForWeak[0].concept} mastery`;
+      needsPractice = [recommendedChallengeId];
+      strengths = strongConcepts;
+    }
+  }
+
+  // Strategy 2: If consistent success (last 3 submissions all passed), recommend harder challenge
+  if (!recommendedChallengeId && submissions.length >= 3) {
+    const lastThree = submissions.slice(0, 3);
+    const allPassed = lastThree.every(s => s.passed);
+    if (allPassed) {
+      // Find available challenges that are harder than current level
+      const availableChallenges = [];
+      for (const [id, challenge] of Object.entries(serverChallenges)) {
+        if (id.includes('-practice')) continue;
+        if (masteredChallengeIds.has(id)) continue;
+        const prereqs = challenge.prerequisiteIds || [];
+        const prereqsMet = prerequisitesMet(userId, prereqs);
+        if (prereqsMet) {
+          const diffOrder = { easy: 1, medium: 2, hard: 3 };
+          availableChallenges.push({ id, difficulty: diffOrder[challenge.conceptId] || 2, concept: challenge.conceptId });
+        }
+      }
+      // Sort by difficulty ascending (recommend next level up)
+      availableChallenges.sort((a, b) => a.difficulty - b.difficulty);
+      if (availableChallenges.length > 0) {
+        recommendedChallengeId = availableChallenges[0].id;
+        recommendationReason = `Ready for a harder challenge: ${recommendedChallengeId}`;
+        strengths = strongConcepts;
+        needsPractice = [];
+      }
+    }
+  }
+
+  // Strategy 3: Default - recommend first available challenge meeting prerequisites
+  if (!recommendedChallengeId) {
+    for (const [id, challenge] of Object.entries(serverChallenges)) {
+      if (id.includes('-practice')) continue;
+      if (masteredChallengeIds.has(id)) continue;
+      const prereqs = challenge.prerequisiteIds || [];
+      const prereqsMet = prerequisitesMet(userId, prereqs);
+      if (prereqsMet) {
+        recommendedChallengeId = id;
+        recommendationReason = `Start ${recommendedChallengeId} — ${challenge.conceptId} fundamentals`;
+        strengths = strongConcepts;
+        needsPractice = [];
+        break;
+      }
+    }
+  }
+
+  // Fallback: py-01 if nothing else available
+  if (!recommendedChallengeId && !masteredChallengeIds.has('py-01')) {
+    recommendedChallengeId = 'py-01';
+    recommendationReason = 'Start with The Awakening: Mana Calculation — variables fundamentals';
+  }
+
+  return {
+    userId,
+    level: profile.level,
+    rank: profile.rank,
+    conceptMastery: conceptMap,
+    skillMap,
+    masteredChallengeIds,
+    weakConcepts,
+    strongConcepts,
+    fixedConceptStats,
+    recentAttempts,
+    recommendedChallengeId,
+    recommendationReason,
+    strengths,
+    needsPractice,
+    skillsUnlocked,
+  };
+}
+
+/**
+ * Check if user has mastered all given prerequisite challenge IDs
+ */
+function prerequisitesMet(userId, prerequisiteIds) {
+  if (!prerequisiteIds || prerequisiteIds.length === 0) return true;
+  const mastered = db.prepare(`
+    SELECT challenge_id FROM challenge_mastery
+    WHERE user_id = ? AND challenge_id IN (${prerequisiteIds.map(() => '?').join(',')})
+  `).all(userId, ...prerequisiteIds);
+  return mastered.length === prerequisiteIds.length;
+}
+
+/**
+ * Get adaptive challenge recommendation for a user.
+ * Returns a ready-to-display recommendation object.
+ */
+export function getChallengeRecommendation(userId) {
+  const profile = getLearningProfile(userId);
+  if (!profile) return null;
+
+  // If user has a clear recommendation, return it with challenge details
+  if (profile.recommendedChallengeId) {
+    const challenge = serverChallenges[profile.recommendedChallengeId];
+    if (challenge) {
+      return {
+        challengeId: profile.recommendedChallengeId,
+        title: challenge.title,
+        description: challenge.description,
+        concept: challenge.conceptId,
+        xpReward: challenge.xpReward,
+        prerequisiteIds: challenge.prerequisiteIds,
+        reason: profile.recommendationReason,
+        strengths: profile.strengths,
+        needsPractice: profile.needsPractice,
+        levelMet: profile.level,
+        rank: profile.rank,
+      };
+    }
+  }
+
+  // Fallback: return learning profile data for UI to display
+  return {
+    challengeId: profile.recommendedChallengeId || null,
+    title: 'No recommendation available',
+    description: 'Complete challenges to unlock personalized recommendations',
+    concept: null,
+    xpReward: 0,
+    prerequisiteIds: [],
+    reason: 'Build your learning history by completing challenges',
+    strengths: profile.strongConcepts,
+    needsPractice: profile.weakConcepts,
+    levelMet: profile.level,
+    rank: profile.rank,
+    ...profile,
+  };
+}
+
+/**
+ * Get current learning progress summary for dashboard
+ */
+export function getLearningProgress(userId) {
+  const profile = getLearningProfile(userId);
+  if (!profile) return null;
+
+  const masteredChallenges = getUserMasteredChallenges(userId);
+  const totalMainChallenges = 10; // py-01 through py-10
+  const completionRate = masteredChallenges.length / totalMainChallenges;
+
+  // Count skills unlocked (level > 0)
+  const skillsUnlocked = Object.values(profile.skillMap).filter(l => l > 0).length;
+  const totalSkills = profile.skillMap ? Object.keys(profile.skillMap).length : 14;
+
+  // Concept mastery summary
+  const conceptOrder = ['variables', 'conditionals', 'strings', 'loops', 'arrays', 'functions', 'dictionaries', 'recursion'];
+  const conceptSummary = [];
+  for (const c of conceptOrder) {
+    const masteryRow = profile.conceptMastery.find(m => m.concept_id === c);
+    const masteryLevel = masteryRow ? masteryRow.mastery_level : 0;
+    const fs = profile.fixedConceptStats[c];
+    const successRate = fs ? fs.successRate : 0;
+    conceptSummary.push({
+      concept: c,
+      masteryLevel,
+      successRate,
+    });
+  }
+
+  return {
+    completionRate,
+    skillsUnlocked,
+    totalSkills,
+    conceptSummary,
+    weakConcepts: profile.weakConcepts,
+    strongConcepts: profile.strongConcepts,
+    recentAttempts: Object.keys(profile.recentAttempts).length,
+    recommendedChallengeId: profile.recommendedChallengeId,
+    recommendationReason: profile.recommendationReason,
+  };
 }
