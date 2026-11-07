@@ -28,12 +28,10 @@
   left: 0;
   right: 0;
   height: 120px;
-  background: linear-gradient(
-    135deg,
-    rgba(168, 85, 247, 0.22) 0%,
-    rgba(59, 130, 246, 0.15) 50%,
-    rgba(236, 72, 153, 0.08) 100%
-  );
+  background: linear-gradient(135deg,
+      rgba(168, 85, 247, 0.22) 0%,
+      rgba(59, 130, 246, 0.15) 50%,
+      rgba(236, 72, 153, 0.08) 100%);
   pointer-events: none;
 }
 
@@ -638,8 +636,15 @@
 }
 
 @keyframes modalEnter {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .guild-modal-header {
@@ -667,7 +672,8 @@
   color: var(--text-secondary);
 }
 
-.guild-form-input, .guild-form-textarea {
+.guild-form-input,
+.guild-form-textarea {
   background: var(--bg-card);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
@@ -677,7 +683,8 @@
   outline: none;
 }
 
-.guild-form-input:focus, .guild-form-textarea:focus {
+.guild-form-input:focus,
+.guild-form-textarea:focus {
   border-color: var(--accent-primary);
 }
 
@@ -745,4 +752,3 @@
   color: var(--text-muted);
   max-width: 400px;
 }
-

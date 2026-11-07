@@ -55,6 +55,31 @@ import {
   claimGuildQuestReward,
   getCompetitiveLeaderboard,
 } from './guilds.mjs';
+import {
+  initSeasonTables,
+  getSeasonsList,
+  getActiveSeason,
+  getSeasonDetails,
+  claimSeasonReward,
+  getArenaProfile,
+  joinArenaQueue,
+  leaveArenaQueue,
+  getQueueStatus,
+  getArenaMatch,
+  submitArenaMatch,
+  forfeitArenaMatch,
+  getUserMatchHistory,
+  getArenaLeaderboard,
+  getTournamentsList,
+  getTournamentDetails,
+  createTournament,
+  registerForTournament,
+  withdrawFromTournament,
+  startTournament,
+  submitTournamentMatch,
+  claimTournamentReward,
+  recordSeasonalXp,
+} from './seasons.mjs';
 
 // Initialize SQLite database & seed demo user
 initDatabase();
@@ -64,6 +89,8 @@ initDungeonTables();
 initAchievementTables();
 // Initialize guild tables (idempotent)
 initGuildTables();
+// Initialize seasons, arena & tournament tables (idempotent)
+initSeasonTables();
 
 const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -556,6 +583,7 @@ const server = http.createServer(async (req, res) => {
     }
     const full = getUserFullProgression(session.id);
     const guildProfile = getUserGuildProfile(session.id);
+    const arenaProfile = getArenaProfile(session.id);
     return sendJson(res, 200, {
       user: { id: session.id, username: session.username, email: session.email },
       ...full,
@@ -566,6 +594,7 @@ const server = http.createServer(async (req, res) => {
         rank: guildProfile.guild.rank,
         role: guildProfile.membership.role,
       } : null,
+      arena: arenaProfile,
     });
   }
 
@@ -578,6 +607,7 @@ const server = http.createServer(async (req, res) => {
     }
     const full = getUserFullProgression(session.id);
     const guildProfile = getUserGuildProfile(session.id);
+    const arenaProfile = getArenaProfile(session.id);
     return sendJson(res, 200, {
       ...full,
       guild: guildProfile?.inGuild ? {
@@ -587,6 +617,7 @@ const server = http.createServer(async (req, res) => {
         rank: guildProfile.guild.rank,
         role: guildProfile.membership.role,
       } : null,
+      arena: arenaProfile,
     });
   }
 
@@ -790,6 +821,7 @@ const server = http.createServer(async (req, res) => {
         // Record guild progression activity (challenges, concepts, XP)
         if (!challenge.isPractice) {
           recordGuildActivity(session.id, 'challenge', challenge.questId, xpAwardResult.xpAwarded, { challenges: 1 });
+          recordSeasonalXp(session.id, xpAwardResult.xpAwarded);
         }
         if (challenge.conceptId && !xpAwardResult.isDuplicate) {
           recordGuildActivity(session.id, 'concept', challenge.conceptId, 0, { concepts: 1 });
@@ -1478,6 +1510,360 @@ const server = http.createServer(async (req, res) => {
     const details = getGuildDetails(guildId, session ? session.id : null);
     if (!details) {
       return sendJson(res, 404, { error: 'Guild not found.' });
+    }
+    return sendJson(res, 200, details);
+  }
+
+  // ─── Seasons: Get Seasons List ───────────────────────────────────────────
+  if (req.method === 'GET' && url.pathname === '/api/seasons') {
+    const seasons = getSeasonsList();
+    return sendJson(res, 200, { seasons });
+  }
+
+  // ─── Seasons: Get Active Season ──────────────────────────────────────────
+  if (req.method === 'GET' && url.pathname === '/api/seasons/active') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    const season = getActiveSeason(session ? session.id : null);
+    if (!season) {
+      return sendJson(res, 404, { error: 'No season found.' });
+    }
+    return sendJson(res, 200, season);
+  }
+
+  // ─── Seasons: Claim Season Rewards ───────────────────────────────────────
+  const seasonClaimMatch = url.pathname.match(/^\/api\/seasons\/([a-zA-Z0-9_-]+)\/claim$/);
+  if (req.method === 'POST' && seasonClaimMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    const seasonId = seasonClaimMatch[1];
+    const result = claimSeasonReward(session.id, seasonId);
+    if (!result.success) {
+      return sendJson(res, 400, { error: result.error });
+    }
+    const full = getUserFullProgression(session.id);
+    return sendJson(res, 200, { ...result, profile: full.profile });
+  }
+
+  // ─── Seasons: Get Season Details ─────────────────────────────────────────
+  const seasonDetailMatch = url.pathname.match(/^\/api\/seasons\/([a-zA-Z0-9_-]+)$/);
+  if (req.method === 'GET' && seasonDetailMatch) {
+    const seasonId = seasonDetailMatch[1];
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    const season = getSeasonDetails(seasonId, session ? session.id : null);
+    if (!season) {
+      return sendJson(res, 404, { error: 'Season not found.' });
+    }
+    return sendJson(res, 200, season);
+  }
+
+  // ─── Arena: Get Profile ──────────────────────────────────────────────────
+  if (req.method === 'GET' && url.pathname === '/api/arena/profile') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    const targetUserId = url.searchParams.get('userId') || (session ? session.id : null);
+    if (!targetUserId) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    const profile = getArenaProfile(targetUserId);
+    return sendJson(res, 200, profile);
+  }
+
+  // ─── Arena: Join Queue ───────────────────────────────────────────────────
+  if (req.method === 'POST' && url.pathname === '/api/arena/queue') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    try {
+      const payload = await readJsonBody().catch(() => ({}));
+      const result = joinArenaQueue(session.id, { allowAi: !!payload.allowAi });
+      return sendJson(res, 200, result);
+    } catch (err) {
+      return sendJson(res, 500, { error: `Queue error: ${err.message}` });
+    }
+  }
+
+  // ─── Arena: Leave Queue ──────────────────────────────────────────────────
+  if (req.method === 'POST' && url.pathname === '/api/arena/queue/leave') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    const result = leaveArenaQueue(session.id);
+    return sendJson(res, 200, result);
+  }
+
+  // ─── Arena: Queue Status ─────────────────────────────────────────────────
+  if (req.method === 'GET' && url.pathname === '/api/arena/queue/status') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    const status = getQueueStatus(session.id);
+    return sendJson(res, 200, status);
+  }
+
+  // ─── Arena: Match History ────────────────────────────────────────────────
+  if (req.method === 'GET' && url.pathname === '/api/arena/history') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    const limit = url.searchParams.get('limit') || 10;
+    const page = url.searchParams.get('page') || 1;
+    const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+    const history = getUserMatchHistory(session.id, limit, offset);
+    return sendJson(res, 200, history);
+  }
+
+  // ─── Arena: Leaderboard ──────────────────────────────────────────────────
+  if (req.method === 'GET' && url.pathname === '/api/arena/leaderboard') {
+    const page = url.searchParams.get('page') || 1;
+    const limit = url.searchParams.get('limit') || 25;
+    const division = url.searchParams.get('division') || 'all';
+    const lb = getArenaLeaderboard(page, limit, division);
+    return sendJson(res, 200, lb);
+  }
+
+  // ─── Arena: Run Sample Code In Match ─────────────────────────────────────
+  const arenaRunMatch = url.pathname.match(/^\/api\/arena\/matches\/([a-zA-Z0-9_-]+)\/run$/);
+  if (req.method === 'POST' && arenaRunMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    try {
+      const matchId = arenaRunMatch[1];
+      const match = getArenaMatch(matchId, session.id);
+      if (!match) return sendJson(res, 404, { error: 'Match not found.' });
+
+      const payload = await readJsonBody();
+      const { code } = payload;
+      if (!code || typeof code !== 'string') return sendJson(res, 400, { error: 'Missing code.' });
+      if (code.length > MAX_CODE_LENGTH) return sendJson(res, 400, { error: 'Code too long.' });
+
+      const script = buildHarnessScript(code, match.challenge.functionName, match.challenge.sampleTests);
+      const evalResult = await executeInPythonProcess(script);
+
+      return sendJson(res, 200, {
+        success: evalResult.success,
+        allPassed: evalResult.allPassed,
+        passedCount: evalResult.results.filter((r) => r.passed).length,
+        totalCount: evalResult.results.length,
+        results: evalResult.results,
+        stdout: evalResult.stdout,
+        error: evalResult.error,
+        durationMs: evalResult.durationMs,
+      });
+    } catch (err) {
+      return sendJson(res, 500, { error: `Arena test error: ${err.message}` });
+    }
+  }
+
+  // ─── Arena: Submit Solution ──────────────────────────────────────────────
+  const arenaSubmitMatch = url.pathname.match(/^\/api\/arena\/matches\/([a-zA-Z0-9_-]+)\/submit$/);
+  if (req.method === 'POST' && arenaSubmitMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    try {
+      const matchId = arenaSubmitMatch[1];
+      const payload = await readJsonBody();
+      const { code } = payload;
+      if (!code || typeof code !== 'string') return sendJson(res, 400, { error: 'Missing code.' });
+      if (code.length > MAX_CODE_LENGTH) return sendJson(res, 400, { error: 'Code too long.' });
+
+      const result = await submitArenaMatch(
+        session.id,
+        matchId,
+        code,
+        executeInPythonProcess,
+        buildHarnessScript
+      );
+
+      if (!result.success) {
+        return sendJson(res, 400, { error: result.error });
+      }
+
+      return sendJson(res, 200, result);
+    } catch (err) {
+      return sendJson(res, 500, { error: `Arena submit error: ${err.message}` });
+    }
+  }
+
+  // ─── Arena: Forfeit Match ────────────────────────────────────────────────
+  const arenaForfeitMatch = url.pathname.match(/^\/api\/arena\/matches\/([a-zA-Z0-9_-]+)\/forfeit$/);
+  if (req.method === 'POST' && arenaForfeitMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    const matchId = arenaForfeitMatch[1];
+    const result = forfeitArenaMatch(session.id, matchId);
+    if (!result.success) {
+      return sendJson(res, 400, { error: result.error });
+    }
+    return sendJson(res, 200, result);
+  }
+
+  // ─── Arena: Get Match Details ────────────────────────────────────────────
+  const arenaGetMatch = url.pathname.match(/^\/api\/arena\/matches\/([a-zA-Z0-9_-]+)$/);
+  if (req.method === 'GET' && arenaGetMatch) {
+    const matchId = arenaGetMatch[1];
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    const match = getArenaMatch(matchId, session ? session.id : null);
+    if (!match) {
+      return sendJson(res, 404, { error: 'Match not found.' });
+    }
+    return sendJson(res, 200, match);
+  }
+
+  // ─── Tournaments: List Tournaments ───────────────────────────────────────
+  if (req.method === 'GET' && url.pathname === '/api/tournaments') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    const list = getTournamentsList(session ? session.id : null);
+    return sendJson(res, 200, { tournaments: list });
+  }
+
+  // ─── Tournaments: Create Tournament ──────────────────────────────────────
+  if (req.method === 'POST' && url.pathname === '/api/tournaments') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    try {
+      const payload = await readJsonBody();
+      const result = createTournament(session.id, payload);
+      if (!result.success) {
+        return sendJson(res, 400, { error: result.error });
+      }
+      return sendJson(res, 201, result);
+    } catch (err) {
+      return sendJson(res, 500, { error: `Create tournament error: ${err.message}` });
+    }
+  }
+
+  // ─── Tournaments: Register ───────────────────────────────────────────────
+  const tournRegisterMatch = url.pathname.match(/^\/api\/tournaments\/([a-zA-Z0-9_-]+)\/register$/);
+  if (req.method === 'POST' && tournRegisterMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    const tournamentId = tournRegisterMatch[1];
+    const result = registerForTournament(session.id, tournamentId);
+    if (!result.success) {
+      return sendJson(res, 400, { error: result.error });
+    }
+    return sendJson(res, 200, result);
+  }
+
+  // ─── Tournaments: Withdraw ───────────────────────────────────────────────
+  const tournWithdrawMatch = url.pathname.match(/^\/api\/tournaments\/([a-zA-Z0-9_-]+)\/withdraw$/);
+  if (req.method === 'POST' && tournWithdrawMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    const tournamentId = tournWithdrawMatch[1];
+    const result = withdrawFromTournament(session.id, tournamentId);
+    if (!result.success) {
+      return sendJson(res, 400, { error: result.error });
+    }
+    return sendJson(res, 200, result);
+  }
+
+  // ─── Tournaments: Start Tournament ───────────────────────────────────────
+  const tournStartMatch = url.pathname.match(/^\/api\/tournaments\/([a-zA-Z0-9_-]+)\/start$/);
+  if (req.method === 'POST' && tournStartMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    const tournamentId = tournStartMatch[1];
+    const result = startTournament(tournamentId);
+    if (!result.success) {
+      return sendJson(res, 400, { error: result.error });
+    }
+    return sendJson(res, 200, result);
+  }
+
+  // ─── Tournaments: Submit Match Solution ──────────────────────────────────
+  const tournSubmitMatch = url.pathname.match(/^\/api\/tournaments\/([a-zA-Z0-9_-]+)\/matches\/([a-zA-Z0-9_-]+)\/submit$/);
+  if (req.method === 'POST' && tournSubmitMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    try {
+      const [, , matchId] = tournSubmitMatch;
+      const payload = await readJsonBody();
+      const { code } = payload;
+      if (!code || typeof code !== 'string') return sendJson(res, 400, { error: 'Missing code.' });
+
+      const result = await submitTournamentMatch(
+        session.id,
+        matchId,
+        code,
+        executeInPythonProcess,
+        buildHarnessScript
+      );
+
+      if (!result.success) {
+        return sendJson(res, 400, { error: result.error });
+      }
+      return sendJson(res, 200, result);
+    } catch (err) {
+      return sendJson(res, 500, { error: `Tournament match submit error: ${err.message}` });
+    }
+  }
+
+  // ─── Tournaments: Claim Placement Rewards ────────────────────────────────
+  const tournClaimMatch = url.pathname.match(/^\/api\/tournaments\/([a-zA-Z0-9_-]+)\/claim$/);
+  if (req.method === 'POST' && tournClaimMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    const tournamentId = tournClaimMatch[1];
+    const result = claimTournamentReward(session.id, tournamentId);
+    if (!result.success) {
+      return sendJson(res, 400, { error: result.error });
+    }
+    const full = getUserFullProgression(session.id);
+    return sendJson(res, 200, { ...result, profile: full.profile });
+  }
+
+  // ─── Tournaments: Get Details & Bracket ──────────────────────────────────
+  const tournDetailMatch = url.pathname.match(/^\/api\/tournaments\/([a-zA-Z0-9_-]+)$/);
+  if (req.method === 'GET' && tournDetailMatch) {
+    const tournamentId = tournDetailMatch[1];
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    const details = getTournamentDetails(tournamentId, session ? session.id : null);
+    if (!details) {
+      return sendJson(res, 404, { error: 'Tournament not found.' });
     }
     return sendJson(res, 200, details);
   }
