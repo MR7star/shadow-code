@@ -30,11 +30,40 @@ import {
   validateDungeonChallengeAccess,
   DUNGEON_MAP,
 } from './dungeons.mjs';
+import {
+  initAchievementTables,
+  checkAndUnlockAchievements,
+  claimAchievement,
+  getUserTitles,
+  equipTitle,
+  unequipTitle,
+} from './achievements.mjs';
+import {
+  initGuildTables,
+  createGuild,
+  getGuildsList,
+  getGuildDetails,
+  getUserGuildProfile,
+  joinGuild,
+  leaveGuild,
+  kickMember,
+  transferLeadership,
+  updateMemberRole,
+  invitePlayer,
+  respondToInvite,
+  recordGuildActivity,
+  claimGuildQuestReward,
+  getCompetitiveLeaderboard,
+} from './guilds.mjs';
 
 // Initialize SQLite database & seed demo user
 initDatabase();
 // Initialize dungeon tables (idempotent)
 initDungeonTables();
+// Initialize achievement & title tables (idempotent)
+initAchievementTables();
+// Initialize guild tables (idempotent)
+initGuildTables();
 
 const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -1089,6 +1118,91 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       return sendJson(res, 500, { error: `Dungeon submission error: ${err.message}` });
     }
+  }
+
+  // ─── Achievements: Get Hunter Collection & Evaluate Progress ─────────────
+  if (req.method === 'GET' && url.pathname === '/api/achievements') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Unauthorized.' });
+    }
+    const data = checkAndUnlockAchievements(session.id);
+    return sendJson(res, 200, data);
+  }
+
+  // ─── Achievements: Check & Unlock Newly Completed ─────────────────────────
+  if (req.method === 'POST' && url.pathname === '/api/achievements/check') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Unauthorized.' });
+    }
+    const data = checkAndUnlockAchievements(session.id);
+    return sendJson(res, 200, { ...data, unlocked: data.newlyUnlocked });
+  }
+
+  // ─── Achievements: Explicit Claim Achievement ────────────────────────────
+  const claimAchMatch = url.pathname.match(/^\/api\/achievements\/([a-z0-9_-]+)\/claim$/);
+  if (req.method === 'POST' && claimAchMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Unauthorized.' });
+    }
+    const achievementId = claimAchMatch[1];
+    const result = claimAchievement(session.id, achievementId);
+    if (!result.success) {
+      return sendJson(res, 400, { error: result.error, remainingRequirement: result.remainingRequirement });
+    }
+    return sendJson(res, 200, result);
+  }
+
+  // ─── Titles: Get Owned & Equipped Titles ─────────────────────────────────
+  if (req.method === 'GET' && url.pathname === '/api/titles') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Unauthorized.' });
+    }
+    const data = getUserTitles(session.id);
+    return sendJson(res, 200, data);
+  }
+
+  // ─── Titles: Equip Title ─────────────────────────────────────────────────
+  if (req.method === 'POST' && url.pathname === '/api/titles/equip') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Unauthorized.' });
+    }
+    try {
+      const payload = await readJsonBody();
+      const { title } = payload;
+      if (!title || typeof title !== 'string') {
+        return sendJson(res, 400, { error: 'Missing title parameter.' });
+      }
+      const result = equipTitle(session.id, title);
+      if (!result.success) {
+        return sendJson(res, 400, { error: result.error });
+      }
+      const full = getUserFullProgression(session.id);
+      return sendJson(res, 200, { ...result, profile: full.profile });
+    } catch (err) {
+      return sendJson(res, 500, { error: `Equip title error: ${err.message}` });
+    }
+  }
+
+  // ─── Titles: Unequip Title ───────────────────────────────────────────────
+  if (req.method === 'POST' && url.pathname === '/api/titles/unequip') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Unauthorized.' });
+    }
+    const result = unequipTitle(session.id);
+    const full = getUserFullProgression(session.id);
+    return sendJson(res, 200, { ...result, profile: full.profile });
   }
 
   // 404

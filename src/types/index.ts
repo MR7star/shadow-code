@@ -90,16 +90,60 @@ export interface LeaderboardEntry {
   isCurrentPlayer?: boolean;
 }
 
-// ─── Achievement Types ───────────────────────────────────────────
+// ─── Achievement & Title Types ─────────────────────────────────────
+
+export type AchievementCategory = 'all' | 'programming' | 'progression' | 'exploration' | 'consistency' | 'mastery';
+
+export type AchievementRarity = 'common' | 'rare' | 'epic' | 'legendary';
 
 export interface Achievement {
   id: string;
   name: string;
   description: string;
+  category?: string;
   icon: string;
-  unlockedAt?: string;
+  rarity: AchievementRarity;
+  target?: number;
+  xpReward?: number;
+  titleReward?: string | null;
   isUnlocked: boolean;
-  rarity: 'common' | 'rare' | 'epic' | 'legendary';
+  unlockedAt?: string | null;
+  progress?: number;
+  progressPercent?: number;
+  remainingRequirement?: string;
+}
+
+export interface AchievementCategorySummary {
+  id: string;
+  name: string;
+  total: number;
+  unlocked: number;
+  completionPercent: number;
+}
+
+export interface AchievementStats {
+  total: number;
+  unlockedCount: number;
+  completionPercent: number;
+  totalXpEarned: number;
+  titlesUnlockedCount: number;
+}
+
+export interface UserTitle {
+  id: string;
+  title: string;
+  source: string;
+  unlockedAt: string;
+  isEquipped: boolean;
+}
+
+export interface AchievementsResponse {
+  achievements: Achievement[];
+  categories: AchievementCategorySummary[];
+  stats: AchievementStats;
+  titles: UserTitle[];
+  equippedTitle: string;
+  newlyUnlocked: string[];
 }
 
 // ─── Activity Types ──────────────────────────────────────────────

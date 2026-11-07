@@ -18,6 +18,7 @@ const baseNavItems: NavItem[] = [
   { path: '/dungeons', label: 'Dungeons', icon: '🏰', section: 'main' },
   { path: '/skills', label: 'Skill Tree', icon: '🌟', section: 'main' },
   { path: '/promotion', label: 'Promotion Trials', icon: '🏆', section: 'main' },
+  { path: '/achievements', label: 'Achievements', icon: '🎖️', section: 'player' },
   { path: '/profile', label: 'Profile', icon: '👤', section: 'player' },
   { path: '/leaderboard', label: 'Leaderboard', icon: '🏆', section: 'player' },
 ];
@@ -28,6 +29,7 @@ const pageTitles: Record<string, string> = {
   '/dungeons': 'Programming Dungeons',
   '/skills': 'Skill Tree',
   '/promotion': 'Rank Promotion Trials',
+  '/achievements': 'Hunter Achievements & Titles',
   '/profile': 'Player Profile',
   '/leaderboard': 'Leaderboard',
 };

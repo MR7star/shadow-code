@@ -11,6 +11,7 @@ import crypto from 'node:crypto';
 import { db } from './db.mjs';
 import { serverChallenges } from './challenges.mjs';
 import { awardQuestCompletionAtomic } from './auth.mjs';
+import { unlockUserTitle } from './achievements.mjs';
 
 // ─── Dungeon Definitions ────────────────────────────────────────────────────
 // Each dungeon references existing challenge IDs from serverChallenges.
@@ -584,6 +585,9 @@ export function recordDungeonChallengeCompletion(userId, dungeonId, challengeId,
         now,
         userId
       );
+      try {
+        unlockUserTitle(userId, dungeon.bonusTitle, 'dungeon');
+      } catch {}
     }
   }
 

@@ -1,7 +1,8 @@
 import { useProgression } from '../context/ProgressionContext';
 import { useAuth } from '../context/AuthContext';
 import { useEffect, useState } from 'react';
-import type { QuestDifficulty, Rank } from '../types';
+import { Link } from 'react-router-dom';
+import type { QuestDifficulty, Rank, AchievementsResponse } from '../types';
 import './Dashboard.css';
 
 const statBarColors: Record<string, string> = {
@@ -78,11 +79,44 @@ export default function Dashboard() {
     refreshDailyQuests,
     claimDailyChest 
   } = useProgression();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, token } = useAuth();
   const [timeToReset, setTimeToReset] = useState(formatTimeToReset());
   const [claimingChest, setClaimingChest] = useState(false);
+  const [achievementSummary, setAchievementSummary] = useState<{ unlocked: number; total: number; titles: number }>({
+    unlocked: 0,
+    total: 20,
+    titles: 1,
+  });
 
   const xpPercent = Math.min(100, Math.round((player.xp / player.xpToNextLevel) * 100));
+
+  useEffect(() => {
+    if (!token || !isAuthenticated) return;
+    let isMounted = true;
+    async function loadAchievements() {
+      try {
+        const res = await fetch('/api/achievements', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data: AchievementsResponse = await res.json();
+          if (isMounted) {
+            setAchievementSummary({
+              unlocked: data.stats?.unlockedCount || 0,
+              total: data.stats?.total || 20,
+              titles: data.titles?.length || data.stats?.titlesUnlockedCount || 1,
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Dashboard achievements summary load failed:', err);
+      }
+    }
+    void loadAchievements();
+    return () => {
+      isMounted = false;
+    };
+  }, [token, isAuthenticated]);
 
   const statCards = [
     {
@@ -105,6 +139,14 @@ export default function Dashboard() {
       label: 'Current Streak',
       color: 'var(--color-warning)',
       bg: 'var(--color-warning-glow)',
+    },
+    {
+      icon: '🎖️',
+      value: `${achievementSummary.unlocked}/${achievementSummary.total}`,
+      label: 'Achievements',
+      color: 'var(--rarity-epic)',
+      bg: 'rgba(168, 85, 247, 0.1)',
+      link: '/achievements',
     },
     {
       icon: '🏆',
@@ -151,7 +193,15 @@ export default function Dashboard() {
             <div className="hero-greeting">Welcome back, Hunter</div>
             <h2 className="hero-name">{player.name}</h2>
             <div className="hero-title-line">
-              <span className="hero-title">{player.title}</span>
+              <Link
+                to="/achievements"
+                className="hero-title"
+                style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                title="Manage titles in Hunter Collection"
+              >
+                <span>⚡ {player.title}</span>
+                <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>✎</span>
+              </Link>
               <span
                 className="hero-rank-badge"
                 style={{
@@ -184,21 +234,31 @@ export default function Dashboard() {
 
       {/* Stats Grid */}
       <section className="stats-grid stagger-children">
-        {statCards.map((stat, i) => (
-          <div
-            key={i}
-            className="stat-card"
-            style={{ '--stat-color': stat.color } as React.CSSProperties}
-          >
-            <div className="stat-icon" style={{ background: stat.bg, color: stat.color }}>
-              {stat.icon}
+        {statCards.map((stat, i) => {
+          const cardEl = (
+            <div
+              className="stat-card"
+              style={{ '--stat-color': stat.color } as React.CSSProperties}
+            >
+              <div className="stat-icon" style={{ background: stat.bg, color: stat.color }}>
+                {stat.icon}
+              </div>
+              <div className="stat-details">
+                <div className="stat-value">{stat.value}</div>
+                <div className="stat-label">{stat.label}</div>
+              </div>
             </div>
-            <div className="stat-details">
-              <div className="stat-value">{stat.value}</div>
-              <div className="stat-label">{stat.label}</div>
-            </div>
-          </div>
-        ))}
+          );
+
+          if (stat.link) {
+            return (
+              <Link key={i} to={stat.link} style={{ textDecoration: 'none', color: 'inherit' }}>
+                {cardEl}
+              </Link>
+            );
+          }
+          return <div key={i}>{cardEl}</div>;
+        })}
       </section>
 
       {/* Daily Quests Section */}
