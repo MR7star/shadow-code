@@ -25,6 +25,13 @@ export interface Player {
   skillsUnlocked: number;
   totalSkills: number;
   stats: PlayerStats;
+  guild?: {
+    id: string;
+    name: string;
+    emblem: string;
+    rank: Rank;
+    role: GuildRole;
+  } | null;
 }
 
 export interface PlayerStats {
@@ -337,4 +344,166 @@ export interface DungeonSubmitResult {
   bonusTitle?: string | null;
   dungeon?: Dungeon;
   player?: any;
+}
+
+// ─── Guild Types ─────────────────────────────────────────────────
+
+export type GuildRole = 'leader' | 'officer' | 'member';
+
+export type GuildRank = Rank;
+
+export type GuildQuestType =
+  | 'challenges_completed'
+  | 'xp_earned'
+  | 'concepts_mastered'
+  | 'dungeons_completed';
+
+export type GuildQuestStatus = 'in-progress' | 'completed' | 'claimed';
+
+export interface GuildMember {
+  userId: string;
+  name: string;
+  rank: Rank;
+  level: number;
+  title: string;
+  role: GuildRole;
+  contributedXp: number;
+  weeklyContributedXp: number;
+  joinedAt: string;
+}
+
+export interface GuildQuest {
+  id: string;
+  questKey: string;
+  questType: GuildQuestType;
+  title: string;
+  description: string;
+  targetValue: number;
+  currentValue: number;
+  progressPercent: number;
+  xpReward: number;
+  status: GuildQuestStatus;
+  userContribution?: number;
+  completedAt?: string | null;
+  claimedAt?: string | null;
+}
+
+export interface GuildAchievement {
+  id: string;
+  achievementKey: string;
+  name: string;
+  description: string;
+  icon: string;
+  unlockedAt: string;
+}
+
+export interface GuildSummary {
+  id: string;
+  name: string;
+  description: string;
+  emblem: string;
+  rank: Rank;
+  level: number;
+  totalXp: number;
+  weeklyXp: number;
+  memberCount: number;
+  maxMembers: number;
+  leaderId?: string;
+  leaderName?: string;
+  leaderRank?: Rank;
+  createdAt: string;
+}
+
+export interface GuildInvite {
+  inviteId: string;
+  guild_id: string;
+  guildName: string;
+  guildEmblem: string;
+  guildRank: Rank;
+  guildLevel: number;
+  memberCount: number;
+  maxMembers: number;
+  inviterName: string;
+  created_at: string;
+}
+
+export interface UserGuildContext {
+  isMember: boolean;
+  role: GuildRole | null;
+  isLeader: boolean;
+  isOfficer: boolean;
+  hasPendingInvite: boolean;
+  hasPendingRequest: boolean;
+}
+
+export interface GuildDetailsResponse {
+  guild: GuildSummary;
+  members: GuildMember[];
+  quests: GuildQuest[];
+  achievements: GuildAchievement[];
+  userContext: UserGuildContext;
+}
+
+export interface UserGuildProfileResponse {
+  inGuild: boolean;
+  guild: GuildSummary | null;
+  membership: {
+    role: GuildRole;
+    contributedXp: number;
+    weeklyContributedXp: number;
+    joinedAt: string;
+  } | null;
+  details?: GuildDetailsResponse | null;
+  pendingInvites: GuildInvite[];
+}
+
+export interface GuildsListResponse {
+  guilds: GuildSummary[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+// ─── Competitive Leaderboard Types ───────────────────────────────
+
+export type LeaderboardCategory = 'players' | 'weekly' | 'guilds' | 'contributions';
+
+export interface GuildLeaderboardEntry {
+  rank: number;
+  id: string;
+  name: string;
+  description: string;
+  emblem: string;
+  guildRank: Rank;
+  level: number;
+  totalXp: number;
+  weeklyXp: number;
+  memberCount: number;
+  maxMembers: number;
+  leaderName: string;
+}
+
+export interface WeeklyLeaderboardEntry extends LeaderboardEntry {
+  weeklyXp: number;
+  guildName?: string | null;
+  guildEmblem?: string | null;
+}
+
+export interface ContributionLeaderboardEntry extends LeaderboardEntry {
+  role: GuildRole;
+  contributedXp: number;
+  weeklyContributedXp: number;
+  guildId: string;
+  guildName: string;
+  guildEmblem: string;
+}
+
+export interface CompetitiveLeaderboardResponse {
+  type: LeaderboardCategory;
+  entries: any[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 }

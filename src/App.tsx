@@ -9,6 +9,7 @@ import SkillTree from './pages/SkillTree';
 import PromotionTrials from './pages/PromotionTrials';
 import Profile from './pages/Profile';
 import Achievements from './pages/Achievements';
+import Guilds from './pages/Guilds';
 import Leaderboard from './pages/Leaderboard';
 import QuestSolver from './pages/QuestSolver';
 import Dungeons from './pages/Dungeons';
@@ -28,6 +29,8 @@ function App() {
               <Route path="/skills" element={<SkillTree />} />
               <Route path="/promotion" element={<PromotionTrials />} />
               <Route path="/achievements" element={<Achievements />} />
+              <Route path="/guilds" element={<Guilds />} />
+              <Route path="/guilds/:guildId" element={<Guilds />} />
               <Route path="/profile" element={<Profile />} />
               <Route path="/leaderboard" element={<Leaderboard />} />
               <Route path="/dungeons" element={<Dungeons />} />

@@ -12,7 +12,8 @@
     "test:daily": "node tests/backend_daily_quests.test.mjs",
     "test:dungeons": "node tests/backend_dungeons.test.mjs",
     "test:achievements": "node tests/backend_achievements.test.mjs",
-    "test:all": "node tests/backend_auth_progression.test.mjs && node tests/backend_mastery_prerequisites.test.mjs && node tests/backend_promotion_trials.test.mjs && node tests/backend_daily_quests.test.mjs && node tests/backend_dungeons.test.mjs && node tests/backend_achievements.test.mjs",
+    "test:guilds": "node tests/backend_guilds.test.mjs",
+    "test:all": "node tests/backend_auth_progression.test.mjs && node tests/backend_mastery_prerequisites.test.mjs && node tests/backend_promotion_trials.test.mjs && node tests/backend_daily_quests.test.mjs && node tests/backend_dungeons.test.mjs && node tests/backend_achievements.test.mjs && node tests/backend_guilds.test.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },

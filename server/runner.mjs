@@ -386,8 +386,27 @@ const server = http.createServer(async (req, res) => {
 
   // ─── Leaderboard ───────────────────────────────────────────────
   if (req.method === 'GET' && url.pathname === '/api/leaderboard') {
-    const list = getLeaderboard();
-    return sendJson(res, 200, list);
+    const type = url.searchParams.get('type');
+    const page = url.searchParams.get('page');
+    const rank = url.searchParams.get('rank') || '';
+    const limit = url.searchParams.get('limit') || 25;
+    const search = url.searchParams.get('search') || '';
+    const guildId = url.searchParams.get('guildId') || null;
+
+    const result = getCompetitiveLeaderboard({
+      type: type || 'players',
+      rank,
+      page: page || 1,
+      limit,
+      search,
+      guildId,
+    });
+
+    if (type || page || url.searchParams.has('format') || url.searchParams.has('search') || url.searchParams.has('rank')) {
+      return sendJson(res, 200, result);
+    }
+
+    return sendJson(res, 200, result.entries);
   }
 
   // ─── Learning: Get Challenge Lesson Content ───────────────────────
@@ -468,6 +487,9 @@ const server = http.createServer(async (req, res) => {
     if (!result.success) {
       return sendJson(res, 400, { error: result.reason, ...result });
     }
+    // Record guild activity for daily chest claim
+    recordGuildActivity(session.id, 'daily_chest', `daily_${new Date().toISOString().slice(0, 10)}`, result.xpAwarded || 0);
+
     // Refresh full progression after claiming
     const full = getUserFullProgression(session.id);
     return sendJson(res, 200, { ...result, profile: full.profile });
@@ -533,9 +555,17 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 401, { error: 'Unauthorized or session expired.' });
     }
     const full = getUserFullProgression(session.id);
+    const guildProfile = getUserGuildProfile(session.id);
     return sendJson(res, 200, {
       user: { id: session.id, username: session.username, email: session.email },
       ...full,
+      guild: guildProfile?.inGuild ? {
+        id: guildProfile.guild.id,
+        name: guildProfile.guild.name,
+        emblem: guildProfile.guild.emblem,
+        rank: guildProfile.guild.rank,
+        role: guildProfile.membership.role,
+      } : null,
     });
   }
 
@@ -547,7 +577,17 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 401, { error: 'Unauthorized.' });
     }
     const full = getUserFullProgression(session.id);
-    return sendJson(res, 200, full);
+    const guildProfile = getUserGuildProfile(session.id);
+    return sendJson(res, 200, {
+      ...full,
+      guild: guildProfile?.inGuild ? {
+        id: guildProfile.guild.id,
+        name: guildProfile.guild.name,
+        emblem: guildProfile.guild.emblem,
+        rank: guildProfile.guild.rank,
+        role: guildProfile.membership.role,
+      } : null,
+    });
   }
 
   // ─── Player: Start Quest ───────────────────────────────────────
@@ -746,6 +786,14 @@ const server = http.createServer(async (req, res) => {
         if (challenge.conceptId) {
           recordLearningActivity(session.id, 'concept_mastery', challenge.conceptId);
         }
+
+        // Record guild progression activity (challenges, concepts, XP)
+        if (!challenge.isPractice) {
+          recordGuildActivity(session.id, 'challenge', challenge.questId, xpAwardResult.xpAwarded, { challenges: 1 });
+        }
+        if (challenge.conceptId && !xpAwardResult.isDuplicate) {
+          recordGuildActivity(session.id, 'concept', challenge.conceptId, 0, { concepts: 1 });
+        }
       }
 
       return sendJson(res, 200, {
@@ -880,6 +928,7 @@ const server = http.createServer(async (req, res) => {
       
       // If promotion succeeded, refresh profile
       if (result.success && result.profile) {
+        recordGuildActivity(session.id, 'promotion_trial', trialId, result.xpAwarded || 0);
         const full = getUserFullProgression(session.id);
         return sendJson(res, 200, { ...result, profile: full.profile });
       }
@@ -1071,6 +1120,16 @@ const server = http.createServer(async (req, res) => {
           recordLearningActivity(session.id, 'concept_mastery', challenge.conceptId);
         }
 
+        // Record guild progression activity for dungeon encounters and stages
+        if (completionResult.dungeonComplete) {
+          recordGuildActivity(session.id, 'dungeon', dungeonId, completionResult.xpAwarded || 0, { dungeons: 1, challenges: 1 });
+        } else {
+          recordGuildActivity(session.id, 'dungeon_stage', `${dungeonId}_${challengeId}`, completionResult.xpAwarded || 0, { challenges: 1 });
+        }
+        if (challenge.conceptId) {
+          recordGuildActivity(session.id, 'concept', challenge.conceptId, 0, { concepts: 1 });
+        }
+
         const updatedDungeon = getDungeonForUser(session.id, dungeonId);
         const fullProgression = getUserFullProgression(session.id);
 
@@ -1203,6 +1262,224 @@ const server = http.createServer(async (req, res) => {
     const result = unequipTitle(session.id);
     const full = getUserFullProgression(session.id);
     return sendJson(res, 200, { ...result, profile: full.profile });
+  }
+
+  // ─── Guilds: List / Discover Guilds ───────────────────────────────────────
+  if (req.method === 'GET' && url.pathname === '/api/guilds') {
+    const search = url.searchParams.get('search') || '';
+    const rank = url.searchParams.get('rank') || '';
+    const page = url.searchParams.get('page') || 1;
+    const limit = url.searchParams.get('limit') || 20;
+    const data = getGuildsList({ search, rank, page, limit });
+    return sendJson(res, 200, data);
+  }
+
+  // ─── Guilds: Create Guild ────────────────────────────────────────────────
+  if (req.method === 'POST' && url.pathname === '/api/guilds') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    try {
+      const payload = await readJsonBody();
+      const result = createGuild(session.id, payload);
+      if (!result.success) {
+        return sendJson(res, 400, { error: result.error });
+      }
+      return sendJson(res, 201, result);
+    } catch (err) {
+      return sendJson(res, 500, { error: `Create guild error: ${err.message}` });
+    }
+  }
+
+  // ─── Guilds: Current User Guild Profile & Invites ─────────────────────────
+  if (req.method === 'GET' && url.pathname === '/api/guilds/me') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    const profile = getUserGuildProfile(session.id);
+    return sendJson(res, 200, profile);
+  }
+
+  // ─── Guilds: Join Guild ──────────────────────────────────────────────────
+  const guildJoinMatch = url.pathname.match(/^\/api\/guilds\/([a-zA-Z0-9_-]+)\/join$/);
+  if (req.method === 'POST' && guildJoinMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    const guildId = guildJoinMatch[1];
+    const result = joinGuild(session.id, guildId);
+    if (!result.success) {
+      return sendJson(res, 400, { error: result.error });
+    }
+    return sendJson(res, 200, result);
+  }
+
+  // ─── Guilds: Leave Guild ─────────────────────────────────────────────────
+  const guildLeaveMatch = url.pathname.match(/^\/api\/guilds\/([a-zA-Z0-9_-]+)\/leave$/);
+  if (req.method === 'POST' && guildLeaveMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    const guildId = guildLeaveMatch[1];
+    const result = leaveGuild(session.id, guildId);
+    if (!result.success) {
+      return sendJson(res, 400, { error: result.error });
+    }
+    return sendJson(res, 200, result);
+  }
+
+  // ─── Guilds: Invite Hunter ───────────────────────────────────────────────
+  const guildInviteMatch = url.pathname.match(/^\/api\/guilds\/([a-zA-Z0-9_-]+)\/invite$/);
+  if (req.method === 'POST' && guildInviteMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    try {
+      const guildId = guildInviteMatch[1];
+      const payload = await readJsonBody();
+      const target = payload.targetUsername || payload.targetUserId || payload.username;
+      const result = invitePlayer(session.id, guildId, target);
+      if (!result.success) {
+        return sendJson(res, 400, { error: result.error });
+      }
+      return sendJson(res, 200, result);
+    } catch (err) {
+      return sendJson(res, 500, { error: `Invite player error: ${err.message}` });
+    }
+  }
+
+  // ─── Guilds: Accept Invitation ───────────────────────────────────────────
+  const guildAcceptInviteMatch = url.pathname.match(/^\/api\/guilds\/([a-zA-Z0-9_-]+)\/invites\/([a-zA-Z0-9_-]+)\/accept$/);
+  if (req.method === 'POST' && guildAcceptInviteMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    const [, guildId, inviteId] = guildAcceptInviteMatch;
+    const result = respondToInvite(session.id, inviteId, true);
+    if (!result.success) {
+      return sendJson(res, 400, { error: result.error });
+    }
+    return sendJson(res, 200, result);
+  }
+
+  // ─── Guilds: Reject Invitation ───────────────────────────────────────────
+  const guildRejectInviteMatch = url.pathname.match(/^\/api\/guilds\/([a-zA-Z0-9_-]+)\/invites\/([a-zA-Z0-9_-]+)\/reject$/);
+  if (req.method === 'POST' && guildRejectInviteMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    const [, guildId, inviteId] = guildRejectInviteMatch;
+    const result = respondToInvite(session.id, inviteId, false);
+    if (!result.success) {
+      return sendJson(res, 400, { error: result.error });
+    }
+    return sendJson(res, 200, result);
+  }
+
+  // ─── Guilds: Kick Member ─────────────────────────────────────────────────
+  const guildKickMatch = url.pathname.match(/^\/api\/guilds\/([a-zA-Z0-9_-]+)\/kick$/);
+  if (req.method === 'POST' && guildKickMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    try {
+      const guildId = guildKickMatch[1];
+      const payload = await readJsonBody();
+      const result = kickMember(session.id, guildId, payload.targetUserId);
+      if (!result.success) {
+        return sendJson(res, 400, { error: result.error });
+      }
+      return sendJson(res, 200, result);
+    } catch (err) {
+      return sendJson(res, 500, { error: `Kick member error: ${err.message}` });
+    }
+  }
+
+  // ─── Guilds: Transfer Leadership ─────────────────────────────────────────
+  const guildTransferMatch = url.pathname.match(/^\/api\/guilds\/([a-zA-Z0-9_-]+)\/transfer-leadership$/);
+  if (req.method === 'POST' && guildTransferMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    try {
+      const guildId = guildTransferMatch[1];
+      const payload = await readJsonBody();
+      const result = transferLeadership(session.id, guildId, payload.newLeaderId);
+      if (!result.success) {
+        return sendJson(res, 400, { error: result.error });
+      }
+      return sendJson(res, 200, result);
+    } catch (err) {
+      return sendJson(res, 500, { error: `Transfer leadership error: ${err.message}` });
+    }
+  }
+
+  // ─── Guilds: Update Member Role (Promote / Demote Officer) ────────────────
+  const guildRoleMatch = url.pathname.match(/^\/api\/guilds\/([a-zA-Z0-9_-]+)\/role$/);
+  if (req.method === 'POST' && guildRoleMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    try {
+      const guildId = guildRoleMatch[1];
+      const payload = await readJsonBody();
+      const result = updateMemberRole(session.id, guildId, payload.targetUserId, payload.role);
+      if (!result.success) {
+        return sendJson(res, 400, { error: result.error });
+      }
+      return sendJson(res, 200, result);
+    } catch (err) {
+      return sendJson(res, 500, { error: `Update member role error: ${err.message}` });
+    }
+  }
+
+  // ─── Guilds: Claim Guild Quest Reward ────────────────────────────────────
+  const guildQuestClaimMatch = url.pathname.match(/^\/api\/guilds\/([a-zA-Z0-9_-]+)\/quests\/([a-zA-Z0-9_-]+)\/claim$/);
+  if (req.method === 'POST' && guildQuestClaimMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    const [, guildId, questId] = guildQuestClaimMatch;
+    const result = claimGuildQuestReward(session.id, guildId, questId);
+    if (!result.success) {
+      return sendJson(res, 400, { error: result.error });
+    }
+    return sendJson(res, 200, result);
+  }
+
+  // ─── Guilds: Get Guild Details ───────────────────────────────────────────
+  const guildDetailMatch = url.pathname.match(/^\/api\/guilds\/([a-zA-Z0-9_-]+)$/);
+  if (req.method === 'GET' && guildDetailMatch) {
+    const guildId = guildDetailMatch[1];
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    const details = getGuildDetails(guildId, session ? session.id : null);
+    if (!details) {
+      return sendJson(res, 404, { error: 'Guild not found.' });
+    }
+    return sendJson(res, 200, details);
   }
 
   // 404

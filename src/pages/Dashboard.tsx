@@ -215,6 +215,46 @@ export default function Dashboard() {
               <span className="hero-title" style={{ color: 'var(--text-accent)' }}>
                 Level {player.level}
               </span>
+              {player.guild ? (
+                <Link
+                  to={`/guilds/${player.guild.id}`}
+                  className="hero-rank-badge"
+                  style={{
+                    textDecoration: 'none',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    background: 'rgba(168, 85, 247, 0.15)',
+                    color: 'var(--accent-secondary, #c084fc)',
+                    border: '1px solid rgba(168, 85, 247, 0.35)',
+                  }}
+                  title={`Guild: ${player.guild.name} (${player.guild.role})`}
+                >
+                  <span>{player.guild.emblem || '🛡️'}</span>
+                  <span>[{player.guild.name}]</span>
+                  <span style={{ fontSize: '0.72rem', opacity: 0.8, textTransform: 'capitalize' }}>
+                    ({player.guild.role})
+                  </span>
+                </Link>
+              ) : (
+                <Link
+                  to="/guilds"
+                  className="hero-rank-badge"
+                  style={{
+                    textDecoration: 'none',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    color: 'var(--text-muted)',
+                    border: '1px solid var(--border-subtle)',
+                  }}
+                  title="Discover or join a guild"
+                >
+                  <span>🛡️</span>
+                  <span>Find Guild</span>
+                </Link>
+              )}
             </div>
 
             <div className="hero-xp">
