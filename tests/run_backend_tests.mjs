@@ -13,6 +13,7 @@ const selfStartingTests = [
   'tests/backend_achievements.test.mjs',
   'tests/backend_guilds.test.mjs',
   'tests/backend_seasons.test.mjs',
+  'tests/backend_ranked_arena.test.mjs',
 ];
 
 function runNodeScript(script, env = process.env) {

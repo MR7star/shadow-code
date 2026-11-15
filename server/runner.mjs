@@ -66,9 +66,12 @@ import {
   leaveArenaQueue,
   getQueueStatus,
   getArenaMatch,
+  getArenaMatchResult,
   submitArenaMatch,
   forfeitArenaMatch,
+  cancelArenaMatch,
   getUserMatchHistory,
+  getUserRatingHistory,
   getArenaLeaderboard,
   getTournamentsList,
   getTournamentDetails,
@@ -1565,11 +1568,11 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/arena/profile') {
     const token = getBearerToken(req);
     const session = verifySession(token);
-    const targetUserId = url.searchParams.get('userId') || (session ? session.id : null);
-    if (!targetUserId) {
+    if (!session) {
       return sendJson(res, 401, { error: 'Authentication required.' });
     }
-    const profile = getArenaProfile(targetUserId);
+    const profile = getArenaProfile(session.id);
+    if (!profile) return sendJson(res, 404, { error: 'Player profile not found.' });
     return sendJson(res, 200, profile);
   }
 
@@ -1581,8 +1584,9 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 401, { error: 'Authentication required.' });
     }
     try {
-      const payload = await readJsonBody().catch(() => ({}));
-      const result = joinArenaQueue(session.id, { allowAi: !!payload.allowAi });
+      await readJsonBody();
+      const result = joinArenaQueue(session.id);
+      if (result.status === 'error') return sendJson(res, 409, { error: result.error });
       return sendJson(res, 200, result);
     } catch (err) {
       return sendJson(res, 500, { error: `Queue error: ${err.message}` });
@@ -1618,15 +1622,28 @@ const server = http.createServer(async (req, res) => {
     if (!session) {
       return sendJson(res, 401, { error: 'Authentication required.' });
     }
-    const limit = url.searchParams.get('limit') || 10;
-    const page = url.searchParams.get('page') || 1;
-    const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+    const limit = Math.min(50, Math.max(1, Number.parseInt(url.searchParams.get('limit') || '10', 10) || 10));
+    const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+    const offset = (page - 1) * limit;
     const history = getUserMatchHistory(session.id, limit, offset);
     return sendJson(res, 200, history);
   }
 
+  // ─── Arena: Rating History ───────────────────────────────────────────────
+  if (req.method === 'GET' && url.pathname === '/api/arena/rating-history') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) return sendJson(res, 401, { error: 'Authentication required.' });
+    const limit = Math.min(100, Math.max(1, Number.parseInt(url.searchParams.get('limit') || '25', 10) || 25));
+    const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+    return sendJson(res, 200, getUserRatingHistory(session.id, limit, (page - 1) * limit));
+  }
+
   // ─── Arena: Leaderboard ──────────────────────────────────────────────────
   if (req.method === 'GET' && url.pathname === '/api/arena/leaderboard') {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) return sendJson(res, 401, { error: 'Authentication required.' });
     const page = url.searchParams.get('page') || 1;
     const limit = url.searchParams.get('limit') || 25;
     const division = url.searchParams.get('division') || 'all';
@@ -1646,6 +1663,9 @@ const server = http.createServer(async (req, res) => {
       const matchId = arenaRunMatch[1];
       const match = getArenaMatch(matchId, session.id);
       if (!match) return sendJson(res, 404, { error: 'Match not found.' });
+      if (!['ready', 'in_progress'].includes(match.status) || match.remainingSeconds <= 0) {
+        return sendJson(res, 409, { error: 'Match is no longer accepting code runs.' });
+      }
 
       const payload = await readJsonBody();
       const { code } = payload;
@@ -1703,6 +1723,17 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // ─── Arena: Cancel Untouched Match ───────────────────────────────────────
+  const arenaCancelMatch = url.pathname.match(/^\/api\/arena\/matches\/([a-zA-Z0-9_-]+)\/cancel$/);
+  if (req.method === 'POST' && arenaCancelMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) return sendJson(res, 401, { error: 'Authentication required.' });
+    const result = cancelArenaMatch(session.id, arenaCancelMatch[1]);
+    if (!result.success) return sendJson(res, 400, { error: result.error });
+    return sendJson(res, 200, result);
+  }
+
   // ─── Arena: Forfeit Match ────────────────────────────────────────────────
   const arenaForfeitMatch = url.pathname.match(/^\/api\/arena\/matches\/([a-zA-Z0-9_-]+)\/forfeit$/);
   if (req.method === 'POST' && arenaForfeitMatch) {
@@ -1719,13 +1750,27 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, result);
   }
 
+  // ─── Arena: Get Match Result ─────────────────────────────────────────────
+  const arenaMatchResult = url.pathname.match(/^\/api\/arena\/matches\/([a-zA-Z0-9_-]+)\/result$/);
+  if (req.method === 'GET' && arenaMatchResult) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) return sendJson(res, 401, { error: 'Authentication required.' });
+    const result = getArenaMatchResult(arenaMatchResult[1], session.id);
+    if (!result) {
+      const match = getArenaMatch(arenaMatchResult[1], session.id);
+      return sendJson(res, match ? 409 : 404, { error: match ? 'Match result is not available yet.' : 'Match not found.' });
+    }
+    return sendJson(res, 200, result);
+  }
+
   // ─── Arena: Get Match Details ────────────────────────────────────────────
   const arenaGetMatch = url.pathname.match(/^\/api\/arena\/matches\/([a-zA-Z0-9_-]+)$/);
   if (req.method === 'GET' && arenaGetMatch) {
-    const matchId = arenaGetMatch[1];
     const token = getBearerToken(req);
     const session = verifySession(token);
-    const match = getArenaMatch(matchId, session ? session.id : null);
+    if (!session) return sendJson(res, 401, { error: 'Authentication required.' });
+    const match = getArenaMatch(arenaGetMatch[1], session.id);
     if (!match) {
       return sendJson(res, 404, { error: 'Match not found.' });
     }

@@ -15,6 +15,7 @@ import QuestSolver from './pages/QuestSolver';
 import Dungeons from './pages/Dungeons';
 import DungeonSolver from './pages/DungeonSolver';
 import Seasons from './pages/Seasons';
+import Arena from './pages/Arena';
 
 function App() {
   return (
@@ -33,6 +34,8 @@ function App() {
               <Route path="/guilds" element={<Guilds />} />
               <Route path="/guilds/:guildId" element={<Guilds />} />
               <Route path="/seasons" element={<Seasons />} />
+              <Route path="/arena" element={<Arena />} />
+              <Route path="/arena/match/:matchId" element={<Arena />} />
               <Route path="/profile" element={<Profile />} />
               <Route path="/leaderboard" element={<Leaderboard />} />
               <Route path="/dungeons" element={<Dungeons />} />

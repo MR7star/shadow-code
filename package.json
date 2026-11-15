@@ -14,6 +14,7 @@
     "test:achievements": "node tests/backend_achievements.test.mjs",
     "test:guilds": "node tests/backend_guilds.test.mjs",
     "test:seasons": "node tests/backend_seasons.test.mjs",
+    "test:arena": "node tests/backend_ranked_arena.test.mjs",
     "test:all": "node tests/run_backend_tests.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview"
