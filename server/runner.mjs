@@ -553,6 +553,7 @@ const server = http.createServer(async (req, res) => {
       const result = registerUser(payload);
       return sendJson(res, 201, result);
     } catch (err) {
+      console.error(`[Auth] Registration failed: ${err.message}`);
       return sendJson(res, 400, { error: err.message });
     }
   }
@@ -564,6 +565,7 @@ const server = http.createServer(async (req, res) => {
       const result = loginUser(payload);
       return sendJson(res, 200, result);
     } catch (err) {
+      console.error(`[Auth] Login failed: ${err.message}`);
       return sendJson(res, 401, { error: err.message });
     }
   }

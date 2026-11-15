@@ -55,8 +55,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
         if (res.ok) {
-          const data = await res.json();
-          if (isMounted) {
+          const data = await res.json().catch(() => null);
+          if (data?.user && isMounted) {
             setUser(data.user);
             setToken(storedToken);
           }
@@ -92,9 +92,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         body: JSON.stringify({ usernameOrEmail, password }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        return { success: false, error: data.error || 'Login failed.' };
+        return { success: false, error: data?.error || `Login failed (${res.status} ${res.statusText || 'Bad Gateway'}).` };
+      }
+      if (!data?.token || !data?.user) {
+        return { success: false, error: 'Invalid response from authentication server.' };
       }
 
       localStorage.setItem(AUTH_TOKEN_KEY, data.token);
@@ -115,9 +118,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         body: JSON.stringify({ username, email, password }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        return { success: false, error: data.error || 'Registration failed.' };
+        return { success: false, error: data?.error || `Registration failed (${res.status} ${res.statusText || 'Bad Gateway'}).` };
+      }
+      if (!data?.token || !data?.user) {
+        return { success: false, error: 'Invalid response from authentication server.' };
       }
 
       localStorage.setItem(AUTH_TOKEN_KEY, data.token);

@@ -126,7 +126,7 @@ export interface ArenaMatchDetails {
   id: string;
   seasonId: string;
   matchType: string;
-  status: 'ready' | 'in_progress' | 'completed' | 'expired' | 'cancelled';
+  status: 'ready' | 'in_progress' | 'completed' | 'expired' | 'cancelled' | 'abandoned';
   challenge: ArenaMatchChallenge;
   player1: ArenaMatchPlayer;
   player2: ArenaMatchPlayer;
@@ -138,6 +138,47 @@ export interface ArenaMatchDetails {
   deadlineAt: string;
   endTime: string | null;
   result: 'win' | 'loss' | 'draw' | null;
+}
+
+export interface SampleTestCaseResult {
+  index: number;
+  description?: string;
+  expected?: any;
+  actual?: any;
+  passed: boolean;
+  error?: string;
+  isHidden?: boolean;
+  executionTimeMs?: number;
+}
+
+export interface ArenaRunResult {
+  success: boolean;
+  allPassed: boolean;
+  passedCount: number;
+  totalCount: number;
+  results: SampleTestCaseResult[];
+  stdout?: string;
+  error?: string;
+  durationMs?: number;
+}
+
+export interface ArenaSubmitResult {
+  success: boolean;
+  allPassed: boolean;
+  passedCount: number;
+  totalCount: number;
+  score: number;
+  elapsedMs: number;
+  matchConcluded: boolean;
+  match: ArenaMatchDetails;
+  error?: string;
+}
+
+export interface ArenaForfeitResult {
+  success: boolean;
+  winnerId: string;
+  match: ArenaMatchDetails;
+  error?: string;
 }
 
 // ─── Division Metadata ────────────────────────────────────────────
@@ -265,5 +306,44 @@ export async function cancelArenaMatch(token: string, matchId: string) {
     `/api/arena/matches/${encodeURIComponent(matchId)}/cancel`,
     token,
     { method: 'POST' }
+  );
+}
+
+export async function runArenaSampleTests(token: string, matchId: string, code: string) {
+  return apiFetch<ArenaRunResult>(
+    `/api/arena/matches/${encodeURIComponent(matchId)}/run`,
+    token,
+    {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }
+  );
+}
+
+export async function submitArenaSolution(token: string, matchId: string, code: string) {
+  return apiFetch<ArenaSubmitResult>(
+    `/api/arena/matches/${encodeURIComponent(matchId)}/submit`,
+    token,
+    {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }
+  );
+}
+
+export async function forfeitArenaMatch(token: string, matchId: string) {
+  return apiFetch<ArenaForfeitResult>(
+    `/api/arena/matches/${encodeURIComponent(matchId)}/forfeit`,
+    token,
+    {
+      method: 'POST',
+    }
+  );
+}
+
+export async function fetchArenaMatchResult(token: string, matchId: string) {
+  return apiFetch<ArenaMatchDetails>(
+    `/api/arena/matches/${encodeURIComponent(matchId)}/result`,
+    token
   );
 }

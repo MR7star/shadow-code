@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import CodeEditor from '../components/editor/CodeEditor';
+import { pythonChallenges } from '../data/challenges';
 import {
   fetchArenaProfile,
   fetchMatchHistory,
@@ -11,6 +13,10 @@ import {
   leaveQueue,
   fetchMatchDetails,
   cancelArenaMatch,
+  runArenaSampleTests,
+  submitArenaSolution,
+  forfeitArenaMatch,
+  fetchArenaMatchResult,
   getDivision,
   getDivisionInfo,
   getDivisionProgress,
@@ -24,6 +30,8 @@ import {
   type LeaderboardResponse,
   type QueueStatusResponse,
   type ArenaMatchDetails,
+  type ArenaRunResult,
+  type ArenaSubmitResult,
 } from '../services/arenaApi';
 import './Arena.css';
 
@@ -498,6 +506,1025 @@ function OverviewSection({
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  ARENA LIVE CODING MATCH WORKSPACE (PHASE 3)
+// ═══════════════════════════════════════════════════════════════════
+
+interface ArenaMatchWorkspaceProps {
+  initialMatch: ArenaMatchDetails;
+  token: string;
+  onExitMatch: () => void;
+  onProfileUpdate: () => void;
+  onCancelMatch?: (matchId: string) => Promise<void>;
+}
+
+function ArenaMatchWorkspace({
+  initialMatch,
+  token,
+  onExitMatch,
+  onProfileUpdate,
+  onCancelMatch,
+}: ArenaMatchWorkspaceProps) {
+  const [match, setMatch] = useState<ArenaMatchDetails>(initialMatch);
+  const [localSecondsRemaining, setLocalSecondsRemaining] = useState<number>(() =>
+    Math.max(0, initialMatch.remainingSeconds)
+  );
+
+  // Challenge lookup
+  const challengeInfo = useMemo(() => {
+    return pythonChallenges.find((c) => c.id === match.challenge.id) || null;
+  }, [match.challenge.id]);
+
+  // Starter template
+  const defaultStarterCode = useMemo(() => {
+    if (challengeInfo?.starterCode) return challengeInfo.starterCode;
+    return `def ${match.challenge.functionName}(*args):\n    """\n    Solve: ${match.challenge.title}\n    """\n    pass\n`;
+  }, [challengeInfo, match.challenge.functionName, match.challenge.title]);
+
+  // Code persistence with match-specific localStorage key
+  const storageKey = `arena_match_${match.id}_code`;
+  const [code, setCode] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(storageKey);
+      if (saved !== null && saved.trim().length > 0) return saved;
+    } catch {}
+    return defaultStarterCode;
+  });
+
+  const handleCodeChange = (newCode: string) => {
+    setCode(newCode);
+    try {
+      localStorage.setItem(storageKey, newCode);
+    } catch {}
+  };
+
+  const handleResetCode = () => {
+    if (window.confirm('Reset code to starter template? Unsaved changes will be discarded.')) {
+      setCode(defaultStarterCode);
+      try {
+        localStorage.setItem(storageKey, defaultStarterCode);
+      } catch {}
+    }
+  };
+
+  // Combatant identification
+  const you = match.player1.isYou ? match.player1 : match.player2;
+  const opponent = match.player1.isYou ? match.player2 : match.player1;
+  const yourDivInfo = getDivisionInfo(getDivision(you.ratingBefore));
+  const oppDivInfo = getDivisionInfo(getDivision(opponent.ratingBefore));
+
+  // Opponent status derived strictly from server data
+  const oppStatusDisplay = useMemo(() => {
+    const status = opponent.status;
+    switch (status) {
+      case 'ready':
+        return { label: 'In Arena', badgeClass: 'status-ready' };
+      case 'submitting':
+        return { label: 'Submitting Code…', badgeClass: 'status-submitting' };
+      case 'submitted':
+        return { label: 'Solution Submitted', badgeClass: 'status-submitted' };
+      case 'completed':
+        return { label: 'Completed (All Passed)', badgeClass: 'status-completed' };
+      case 'forfeited':
+        return { label: 'Forfeited Duel', badgeClass: 'status-forfeited' };
+      case 'timed_out':
+        return { label: 'Timed Out', badgeClass: 'status-timed-out' };
+      default:
+        return { label: 'In Duel', badgeClass: 'status-ready' };
+    }
+  }, [opponent.status]);
+
+  // Attempts tracking
+  const [attemptsCount, setAttemptsCount] = useState<number>(() => {
+    if (you.status === 'completed' || you.status === 'submitted') return 1;
+    return 0;
+  });
+
+  // Test execution & submission states
+  const [isRunningTests, setIsRunningTests] = useState(false);
+  const [sampleRunResult, setSampleRunResult] = useState<ArenaRunResult | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitResult, setSubmitResult] = useState<ArenaSubmitResult | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Tab controls
+  const [leftTab, setLeftTab] = useState<'problem' | 'samples' | 'requirements'>('problem');
+  const [activeDrawerTab, setActiveDrawerTab] = useState<'sample-tests' | 'submission' | 'console'>('sample-tests');
+
+  // Forfeit state
+  const [showForfeitConfirm, setShowForfeitConfirm] = useState(false);
+  const [isForfeiting, setIsForfeiting] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
+
+  // Match result modal state
+  const [matchResult, setMatchResult] = useState<ArenaMatchDetails | null>(null);
+  const [showResultOverlay, setShowResultOverlay] = useState(false);
+
+  // Lock status
+  const isPlayerCompleted = you.status === 'completed' || submitResult?.allPassed;
+  const isOutOfAttempts = attemptsCount >= 5;
+  const isConcluded =
+    ['completed', 'expired', 'cancelled', 'abandoned'].includes(match.status) ||
+    match.winnerId !== null ||
+    localSecondsRemaining <= 0;
+  const isEditorLocked = isConcluded || isPlayerCompleted || isOutOfAttempts || isSubmitting;
+  const attemptsRemaining = Math.max(0, 5 - attemptsCount);
+
+  // Result loader
+  const loadMatchResult = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetchArenaMatchResult(token, match.id);
+      if (res.ok && res.data) {
+        setMatchResult(res.data);
+        setShowResultOverlay(true);
+        onProfileUpdate();
+      }
+    } catch {}
+  }, [token, match.id, onProfileUpdate]);
+
+  // Authoritative match synchronization
+  const fetchMatchSync = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetchMatchDetails(token, match.id);
+      if (res.ok && res.data) {
+        setMatch(res.data);
+        setLocalSecondsRemaining(res.data.remainingSeconds);
+        if (
+          ['completed', 'expired', 'cancelled', 'abandoned'].includes(res.data.status) ||
+          res.data.winnerId !== null
+        ) {
+          void loadMatchResult();
+        }
+      }
+    } catch {}
+  }, [token, match.id, loadMatchResult]);
+
+  // 1-second countdown interval
+  useEffect(() => {
+    if (!['ready', 'in_progress'].includes(match.status)) return;
+    const interval = window.setInterval(() => {
+      setLocalSecondsRemaining((prev) => {
+        if (prev <= 1) {
+          void fetchMatchSync();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [match.status, fetchMatchSync]);
+
+  // Periodic resynchronization (every 3.5s)
+  useEffect(() => {
+    if (!['ready', 'in_progress'].includes(match.status)) return;
+    const pollTimer = window.setInterval(() => {
+      void fetchMatchSync();
+    }, 3500);
+    return () => clearInterval(pollTimer);
+  }, [fetchMatchSync, match.status]);
+
+  // Auto-fetch results if already terminal on mount
+  useEffect(() => {
+    if (
+      ['completed', 'expired', 'cancelled', 'abandoned'].includes(match.status) ||
+      match.winnerId !== null
+    ) {
+      void loadMatchResult();
+    }
+  }, [match.status, match.winnerId, loadMatchResult]);
+
+  // Timer formatting
+  const minutes = Math.floor(localSecondsRemaining / 60);
+  const seconds = localSecondsRemaining % 60;
+  const timerStr = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  const isUrgent = localSecondsRemaining <= 60 && localSecondsRemaining > 0;
+  const isExpired = localSecondsRemaining <= 0;
+
+  // Run Sample Tests
+  const handleRunSampleTests = async () => {
+    if (isRunningTests || isSubmitting || !token) return;
+    setIsRunningTests(true);
+    setActiveDrawerTab('sample-tests');
+
+    try {
+      const res = await runArenaSampleTests(token, match.id, code);
+      if (res.ok && res.data) {
+        setSampleRunResult(res.data);
+      } else {
+        setSampleRunResult({
+          success: false,
+          allPassed: false,
+          passedCount: 0,
+          totalCount: 0,
+          results: [],
+          error: res.error || 'Execution failed.',
+        });
+      }
+    } catch (err) {
+      setSampleRunResult({
+        success: false,
+        allPassed: false,
+        passedCount: 0,
+        totalCount: 0,
+        results: [],
+        error: err instanceof Error ? err.message : 'Network execution error.',
+      });
+    } finally {
+      setIsRunningTests(false);
+    }
+  };
+
+  // Submit Solution
+  const handleSubmitSolution = async () => {
+    if (isEditorLocked || isSubmitting || !token) return;
+    setIsSubmitting(true);
+    setSubmitError(null);
+    setActiveDrawerTab('submission');
+    setAttemptsCount((prev) => Math.min(5, prev + 1));
+
+    try {
+      const res = await submitArenaSolution(token, match.id, code);
+      if (res.ok && res.data) {
+        setSubmitResult(res.data);
+        if (res.data.match) {
+          setMatch(res.data.match);
+        }
+        if (
+          res.data.allPassed ||
+          res.data.matchConcluded ||
+          ['completed', 'expired'].includes(res.data.match?.status)
+        ) {
+          void loadMatchResult();
+        }
+      } else {
+        setSubmitError(res.error || 'Submission failed.');
+        if (res.error && (res.error.includes('limit') || res.error.includes('already finalized'))) {
+          setAttemptsCount(5);
+        }
+      }
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Network submission error.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Forfeit
+  const handleForfeit = async () => {
+    if (isForfeiting || !token) return;
+    setIsForfeiting(true);
+    try {
+      const res = await forfeitArenaMatch(token, match.id);
+      if (res.ok && res.data) {
+        setMatch(res.data.match);
+        setShowForfeitConfirm(false);
+        void loadMatchResult();
+      } else {
+        alert(res.error || 'Failed to forfeit match.');
+      }
+    } catch {
+      alert('Network error while forfeiting.');
+    } finally {
+      setIsForfeiting(false);
+    }
+  };
+
+  // Final Result variables
+  const youResult = matchResult
+    ? matchResult.player1.isYou
+      ? matchResult.player1
+      : matchResult.player2
+    : null;
+  const oppResult = matchResult
+    ? matchResult.player1.isYou
+      ? matchResult.player2
+      : matchResult.player1
+    : null;
+  const resultRatingBefore = youResult?.ratingBefore ?? you.ratingBefore;
+  const resultRatingAfter =
+    youResult?.ratingAfter !== null && youResult?.ratingAfter !== undefined
+      ? youResult.ratingAfter
+      : resultRatingBefore;
+  const resultRatingDelta = resultRatingAfter - resultRatingBefore;
+  const divBefore = getDivision(resultRatingBefore);
+  const divAfter = getDivision(resultRatingAfter);
+  const hasDivisionChanged = divBefore !== divAfter;
+
+  return (
+    <div className="arena-workspace-container animate-fadeIn">
+      {/* ══════════════════════════════════════════════════════════════
+          TOP MATCH HUD
+          ══════════════════════════════════════════════════════════════ */}
+      <div className="arena-workspace-hud">
+        {/* Combatant 1: You */}
+        <div className="arena-hud-combatant you">
+          <div className="arena-hud-avatar" style={{ borderColor: yourDivInfo.color }}>
+            <span>{yourDivInfo.icon}</span>
+          </div>
+          <div className="arena-hud-meta">
+            <div className="arena-hud-name-row">
+              <span className="arena-hud-badge-you">YOU</span>
+              <strong className="arena-hud-name">{you.name}</strong>
+            </div>
+            <div className="arena-hud-stats-row">
+              <span style={{ color: yourDivInfo.color }} className="arena-hud-div-name">
+                {yourDivInfo.name}
+              </span>
+              <span className="arena-hud-sr">{you.ratingBefore} SR</span>
+              {you.status && (
+                <span className={`arena-hud-status-chip ${you.status}`}>
+                  {you.status.replace('_', ' ').toUpperCase()}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Center: Timer & Status */}
+        <div className="arena-hud-center">
+          <div className={`arena-hud-timer-card ${isUrgent ? 'urgent' : ''} ${isExpired ? 'expired' : ''}`}>
+            <span className="arena-hud-timer-icon">⏱️</span>
+            <span className="arena-hud-timer-digits">{timerStr}</span>
+          </div>
+          <div className="arena-hud-match-meta">
+            <span className={`arena-hud-status-badge ${match.status}`}>
+              <span className="arena-status-dot" />
+              {match.status.replace('_', ' ').toUpperCase()}
+            </span>
+            <span className="arena-hud-match-id">Match #{match.id.slice(0, 8)}</span>
+          </div>
+        </div>
+
+        {/* Combatant 2: Opponent */}
+        <div className="arena-hud-combatant opponent">
+          <div className="arena-hud-meta text-right">
+            <div className="arena-hud-name-row justify-end">
+              <strong className="arena-hud-name">{opponent.name}</strong>
+              <span className="arena-hud-badge-opp">OPPONENT</span>
+            </div>
+            <div className="arena-hud-stats-row justify-end">
+              <span className={`arena-hud-status-chip ${oppStatusDisplay.badgeClass}`}>
+                {oppStatusDisplay.label}
+              </span>
+              <span className="arena-hud-sr">{opponent.ratingBefore} SR</span>
+              <span style={{ color: oppDivInfo.color }} className="arena-hud-div-name">
+                {oppDivInfo.name}
+              </span>
+            </div>
+          </div>
+          <div className="arena-hud-avatar" style={{ borderColor: oppDivInfo.color }}>
+            <span>{oppDivInfo.icon}</span>
+          </div>
+
+          <div className="arena-hud-actions">
+            {match.status === 'ready' && attemptsCount === 0 && onCancelMatch && (
+              <button
+                type="button"
+                className="arena-btn arena-btn-secondary arena-btn-cancel-match"
+                onClick={() => setShowCancelConfirm(true)}
+                title="Cancel Untouched Match (No rating penalty)"
+              >
+                ✕ Cancel Match
+              </button>
+            )}
+            {!isConcluded && (
+              <button
+                type="button"
+                className="arena-btn arena-btn-danger arena-btn-forfeit"
+                onClick={() => setShowForfeitConfirm(true)}
+                title="Surrender Duel"
+              >
+                🏳️ Forfeit
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════
+          MAIN SPLIT WORKSPACE
+          ══════════════════════════════════════════════════════════════ */}
+      <div className="arena-workspace-main">
+        {/* ─── LEFT PANEL: PROBLEM SPECIFICATION ───────────────────── */}
+        <div className="arena-problem-panel">
+          <div className="arena-panel-tab-bar">
+            <button
+              type="button"
+              className={`arena-tab-btn ${leftTab === 'problem' ? 'active' : ''}`}
+              onClick={() => setLeftTab('problem')}
+            >
+              📜 Problem Statement
+            </button>
+            <button
+              type="button"
+              className={`arena-tab-btn ${leftTab === 'samples' ? 'active' : ''}`}
+              onClick={() => setLeftTab('samples')}
+            >
+              🧪 Sample Tests ({match.challenge.sampleTests?.length || 0})
+            </button>
+            <button
+              type="button"
+              className={`arena-tab-btn ${leftTab === 'requirements' ? 'active' : ''}`}
+              onClick={() => setLeftTab('requirements')}
+            >
+              ⚙️ Constraints
+            </button>
+          </div>
+
+          <div className="arena-problem-content">
+            {leftTab === 'problem' && (
+              <div className="arena-problem-tab-body">
+                <div className="arena-problem-header">
+                  <span className="arena-kicker">Algorithm Duel · Rank {match.matchType.toUpperCase()}</span>
+                  <h2 className="arena-problem-title">{match.challenge.title}</h2>
+                </div>
+
+                {/* Lore / Story intro if present */}
+                {challengeInfo?.storyIntro && (
+                  <div className="arena-story-callout">
+                    <div className="arena-story-icon">⚔️</div>
+                    <blockquote className="arena-story-text">{challengeInfo.storyIntro}</blockquote>
+                  </div>
+                )}
+
+                {/* Main Problem Description */}
+                <div className="arena-problem-description">
+                  <h4>Task Description</h4>
+                  <p>{challengeInfo?.description || match.challenge.lesson}</p>
+                </div>
+
+                {/* Function Signature */}
+                <div className="arena-signature-card">
+                  <div className="arena-signature-head">
+                    <span>Target Function Signature</span>
+                    <button
+                      type="button"
+                      className="arena-btn-copy-sig"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(`def ${match.challenge.functionName}:`);
+                      }}
+                      title="Copy Signature"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <pre className="arena-signature-code">
+                    <code>def {match.challenge.functionName}(*args):</code>
+                  </pre>
+                </div>
+              </div>
+            )}
+
+            {leftTab === 'samples' && (
+              <div className="arena-problem-tab-body">
+                <h4>Sample Test Cases</h4>
+                <p className="arena-tab-subtitle">
+                  Use these visible cases to verify your implementation before submitting.
+                </p>
+
+                <div className="arena-sample-tests-list">
+                  {match.challenge.sampleTests && match.challenge.sampleTests.length > 0 ? (
+                    match.challenge.sampleTests.map((t: any, idx: number) => (
+                      <div key={idx} className="arena-sample-test-item">
+                        <div className="arena-sample-test-head">
+                          <strong>Sample Case #{idx + 1}</strong>
+                          {t.inputDescription && (
+                            <span className="arena-sample-desc">{t.inputDescription}</span>
+                          )}
+                        </div>
+                        <div className="arena-sample-test-io">
+                          <div className="arena-io-block">
+                            <span className="arena-io-label">Input / Arguments:</span>
+                            <pre className="arena-io-pre">
+                              {Array.isArray(t.args)
+                                ? t.args.map((a: any) => JSON.stringify(a)).join(', ')
+                                : JSON.stringify(t.args ?? t.input ?? '')}
+                            </pre>
+                          </div>
+                          <div className="arena-io-block">
+                            <span className="arena-io-label">Expected Output:</span>
+                            <pre className="arena-io-pre expected">
+                              {JSON.stringify(t.expected, null, 2)}
+                            </pre>
+                          </div>
+                        </div>
+                        {t.explanation && (
+                          <div className="arena-sample-explanation">
+                            <em>Explanation:</em> {t.explanation}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="arena-empty-inline">
+                      <span>🧪</span>
+                      <p>No sample test cases defined for this challenge.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {leftTab === 'requirements' && (
+              <div className="arena-problem-tab-body">
+                <h4>Execution Rules & Constraints</h4>
+                <ul className="arena-constraints-list">
+                  <li>
+                    <strong>Environment:</strong> Python 3 runtime with standard library isolation.
+                  </li>
+                  <li>
+                    <strong>Execution Limit:</strong> 5,000ms per test invocation.
+                  </li>
+                  <li>
+                    <strong>Submission Quota:</strong> Maximum of 5 official submissions permitted per duel.
+                  </li>
+                  <li>
+                    <strong>Scoring Criteria:</strong> Solutions passing all tests earn victory. In ties, fastest execution time decides.
+                  </li>
+                  {challengeInfo?.constraints?.map((c, i) => (
+                    <li key={i}>
+                      <strong>Requirement:</strong> {c}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ─── RIGHT PANEL: CODE EDITOR & EXECUTION RESULTS ────────── */}
+        <div className="arena-editor-panel">
+          {/* Editor Header Toolbar */}
+          <div className="arena-editor-toolbar">
+            <div className="arena-attempts-chip">
+              <span className="arena-attempts-label">Submissions:</span>
+              <strong className={`arena-attempts-count ${attemptsRemaining <= 1 ? 'critical' : ''}`}>
+                {attemptsCount} / 5
+              </strong>
+              <span className="arena-attempts-sub">({attemptsRemaining} remaining)</span>
+            </div>
+
+            <div className="arena-toolbar-actions">
+              <button
+                type="button"
+                className="arena-btn arena-btn-secondary arena-btn-reset-code"
+                onClick={handleResetCode}
+                title="Reset to starter template"
+                disabled={isEditorLocked}
+              >
+                ↺ Reset
+              </button>
+
+              <button
+                type="button"
+                className="arena-btn arena-btn-run-tests"
+                onClick={() => void handleRunSampleTests()}
+                disabled={isRunningTests || isSubmitting}
+                title="Run Sample Tests (Ctrl+Enter)"
+              >
+                {isRunningTests ? (
+                  <>
+                    <div className="arena-spinner-xs" /> Running Tests…
+                  </>
+                ) : (
+                  '▶ Run Sample Tests'
+                )}
+              </button>
+
+              <button
+                type="button"
+                className="arena-btn arena-btn-primary arena-btn-submit-solution"
+                onClick={() => void handleSubmitSolution()}
+                disabled={isEditorLocked || isRunningTests || isSubmitting}
+                title="Submit solution for official evaluation"
+              >
+                {isSubmitting ? (
+                  <>
+                    <div className="arena-spinner-xs" /> Submitting…
+                  </>
+                ) : (
+                  '🚀 Submit Solution'
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Code Editor Container */}
+          <div className="arena-code-editor-box">
+            <CodeEditor
+              value={code}
+              onChange={handleCodeChange}
+              onRun={() => void handleRunSampleTests()}
+              onReset={handleResetCode}
+              disabled={isEditorLocked}
+            />
+
+            {isEditorLocked && (
+              <div className="arena-editor-lock-banner">
+                <span className="arena-lock-icon">🔒</span>
+                <span>
+                  {isPlayerCompleted
+                    ? 'Solution finalized — all test cases successfully passed!'
+                    : isOutOfAttempts
+                      ? 'Maximum official submission attempts reached (5/5).'
+                      : isConcluded
+                        ? 'Match is concluded and no longer accepts code edits.'
+                        : 'Code editor locked.'}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* ─── EXECUTION RESULTS DRAWER ─────────────────────────── */}
+          <div className="arena-results-drawer">
+            <div className="arena-results-drawer-header">
+              <div className="arena-results-tabs">
+                <button
+                  type="button"
+                  className={`arena-results-tab-btn ${activeDrawerTab === 'sample-tests' ? 'active' : ''}`}
+                  onClick={() => setActiveDrawerTab('sample-tests')}
+                >
+                  Sample Tests
+                  {sampleRunResult && (
+                    <span className={`arena-tab-badge ${sampleRunResult.allPassed ? 'pass' : 'fail'}`}>
+                      {sampleRunResult.passedCount}/{sampleRunResult.totalCount}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className={`arena-results-tab-btn ${activeDrawerTab === 'submission' ? 'active' : ''}`}
+                  onClick={() => setActiveDrawerTab('submission')}
+                >
+                  Submission Status
+                  {submitResult && (
+                    <span className={`arena-tab-badge ${submitResult.allPassed ? 'pass' : 'fail'}`}>
+                      {submitResult.passedCount}/{submitResult.totalCount}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className={`arena-results-tab-btn ${activeDrawerTab === 'console' ? 'active' : ''}`}
+                  onClick={() => setActiveDrawerTab('console')}
+                >
+                  Console Output
+                  {sampleRunResult?.stdout && <span className="arena-tab-badge-dot" />}
+                </button>
+              </div>
+
+              {sampleRunResult?.durationMs !== undefined && (
+                <span className="arena-execution-time">
+                  ⚡ {sampleRunResult.durationMs}ms
+                </span>
+              )}
+            </div>
+
+            <div className="arena-results-drawer-body">
+              {/* Tab: Sample Tests */}
+              {activeDrawerTab === 'sample-tests' && (
+                <div className="arena-tab-panel">
+                  {isRunningTests ? (
+                    <div className="arena-evaluating-placeholder">
+                      <div className="arena-spinner-sm" />
+                      <span>Executing solution against sample test harness…</span>
+                    </div>
+                  ) : sampleRunResult ? (
+                    <div className="arena-test-results-container">
+                      <div className={`arena-run-summary-banner ${sampleRunResult.allPassed ? 'success' : 'failure'}`}>
+                        <span>{sampleRunResult.allPassed ? '✓ ALL SAMPLE TESTS PASSED' : '✗ SAMPLE TESTS FAILED'}</span>
+                        <span>
+                          {sampleRunResult.passedCount} of {sampleRunResult.totalCount} tests passed
+                        </span>
+                      </div>
+
+                      {sampleRunResult.error && (
+                        <div className="arena-result-error-banner">
+                          <strong>Runtime / Harness Error:</strong>
+                          <pre>{sampleRunResult.error}</pre>
+                        </div>
+                      )}
+
+                      <div className="arena-test-cards-grid">
+                        {sampleRunResult.results.map((r, i) => (
+                          <div
+                            key={i}
+                            className={`arena-test-case-card ${r.passed ? 'passed' : 'failed'}`}
+                          >
+                            <div className="arena-test-case-card-head">
+                              <span className="arena-test-case-idx">Test #{i + 1}</span>
+                              <span className={`arena-test-badge ${r.passed ? 'pass' : 'fail'}`}>
+                                {r.passed ? 'PASSED' : 'FAILED'}
+                              </span>
+                            </div>
+
+                            <div className="arena-test-io-comparison">
+                              <div className="arena-io-half">
+                                <span className="arena-io-label">Expected:</span>
+                                <pre className="arena-code-block expected">
+                                  {JSON.stringify(r.expected, null, 2)}
+                                </pre>
+                              </div>
+                              <div className="arena-io-half">
+                                <span className="arena-io-label">Actual:</span>
+                                <pre className="arena-code-block actual">
+                                  {r.actual !== undefined ? JSON.stringify(r.actual, null, 2) : 'None'}
+                                </pre>
+                              </div>
+                            </div>
+
+                            {r.error && (
+                              <div className="arena-test-card-error">
+                                <em>Error:</em> {r.error}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="arena-results-empty">
+                      <span>▶️</span>
+                      <p>Run sample tests to verify your algorithm against visible cases.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tab: Submission Evaluation */}
+              {activeDrawerTab === 'submission' && (
+                <div className="arena-tab-panel">
+                  {isSubmitting ? (
+                    <div className="arena-evaluating-placeholder">
+                      <div className="arena-spinner-sm" />
+                      <span>Submitting and evaluating full test harness…</span>
+                    </div>
+                  ) : submitResult ? (
+                    <div className="arena-submission-result-box">
+                      <div className={`arena-submission-banner ${submitResult.allPassed ? 'victory' : 'partial'}`}>
+                        <div className="arena-sub-banner-icon">
+                          {submitResult.allPassed ? '🏆' : '⚠️'}
+                        </div>
+                        <div>
+                          <h4>
+                            {submitResult.allPassed
+                              ? 'ALL TESTS PASSED — SUBMISSION FINALIZED'
+                              : 'SUBMISSION INCOMPLETE — TESTS FAILED'}
+                          </h4>
+                          <p>
+                            {submitResult.allPassed
+                              ? 'Congratulations! Your algorithm met all test constraints.'
+                              : `${submitResult.totalCount - submitResult.passedCount} test case(s) failed. You have ${attemptsRemaining} attempts remaining.`}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="arena-submission-stats-row">
+                        <div className="arena-sub-stat">
+                          <span className="arena-sub-stat-label">Tests Passed</span>
+                          <strong>
+                            {submitResult.passedCount} / {submitResult.totalCount}
+                          </strong>
+                        </div>
+                        <div className="arena-sub-stat">
+                          <span className="arena-sub-stat-label">Calculated Score</span>
+                          <strong>{submitResult.score} pts</strong>
+                        </div>
+                        <div className="arena-sub-stat">
+                          <span className="arena-sub-stat-label">Server Elapsed</span>
+                          <strong>{(submitResult.elapsedMs / 1000).toFixed(2)}s</strong>
+                        </div>
+                        <div className="arena-sub-stat">
+                          <span className="arena-sub-stat-label">Remaining Attempts</span>
+                          <strong>{attemptsRemaining} / 5</strong>
+                        </div>
+                      </div>
+                    </div>
+                  ) : submitError ? (
+                    <div className="arena-result-error-banner">
+                      <strong>Submission Rejected:</strong>
+                      <p>{submitError}</p>
+                    </div>
+                  ) : (
+                    <div className="arena-results-empty">
+                      <span>🚀</span>
+                      <p>No official submission made yet. Submit when ready to test against full criteria.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tab: Console Output */}
+              {activeDrawerTab === 'console' && (
+                <div className="arena-tab-panel">
+                  {sampleRunResult?.stdout ? (
+                    <div className="arena-console-box">
+                      <div className="arena-console-title">Standard Output (stdout)</div>
+                      <pre className="arena-console-stream">{sampleRunResult.stdout}</pre>
+                    </div>
+                  ) : (
+                    <div className="arena-results-empty">
+                      <span>💻</span>
+                      <p>No stdout printed. Use print() in Python to inspect internal variables.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════
+          FORFEIT CONFIRMATION MODAL
+          ══════════════════════════════════════════════════════════════ */}
+      {showForfeitConfirm && (
+        <div className="arena-modal-backdrop animate-fadeIn" role="dialog" aria-modal="true">
+          <div className="arena-modal-card">
+            <div className="arena-modal-icon-badge danger">⚠️</div>
+            <h3>Surrender Duel?</h3>
+            <p>
+              Forfeiting will immediately concede victory to your opponent.
+              Your competitive rating will decrease, and this duel will be permanently recorded as a defeat.
+            </p>
+            <div className="arena-modal-actions">
+              <button
+                type="button"
+                className="arena-btn arena-btn-secondary"
+                onClick={() => setShowForfeitConfirm(false)}
+                disabled={isForfeiting}
+              >
+                Continue Fighting
+              </button>
+              <button
+                type="button"
+                className="arena-btn arena-btn-danger"
+                onClick={() => void handleForfeit()}
+                disabled={isForfeiting}
+              >
+                {isForfeiting ? 'Forfeiting…' : 'Confirm Forfeit'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════
+          CANCEL UNTOUCHED MATCH MODAL
+          ══════════════════════════════════════════════════════════════ */}
+      {showCancelConfirm && (
+        <div className="arena-modal-backdrop animate-fadeIn" role="dialog" aria-modal="true">
+          <div className="arena-modal-card">
+            <div className="arena-modal-icon-badge warning">✕</div>
+            <h3>Cancel Untouched Match?</h3>
+            <p>
+              This duel has not started yet. Cancelling will safely close this match session
+              without adjusting rating or recording a defeat.
+            </p>
+            <div className="arena-modal-actions">
+              <button
+                type="button"
+                className="arena-btn arena-btn-secondary"
+                onClick={() => setShowCancelConfirm(false)}
+                disabled={isCancelling}
+              >
+                Keep Match
+              </button>
+              <button
+                type="button"
+                className="arena-btn arena-btn-danger"
+                onClick={async () => {
+                  if (!onCancelMatch) return;
+                  setIsCancelling(true);
+                  try {
+                    await onCancelMatch(match.id);
+                  } finally {
+                    setIsCancelling(false);
+                    setShowCancelConfirm(false);
+                  }
+                }}
+                disabled={isCancelling}
+              >
+                {isCancelling ? 'Cancelling…' : 'Confirm Cancel'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════
+          MATCH RESULT OVERLAY
+          ══════════════════════════════════════════════════════════════ */}
+      {showResultOverlay && matchResult && (
+        <div className="arena-result-overlay animate-fadeIn" role="dialog" aria-modal="true">
+          <div className={`arena-result-card outcome-${matchResult.result}`}>
+            <div className="arena-result-card-header">
+              <span className="arena-result-sysmsg">[ SYSTEM NOTIFICATION · MATCH RESOLVED ]</span>
+              <h1 className="arena-result-main-title">
+                {matchResult.result === 'win'
+                  ? 'VICTORY ACHIEVED'
+                  : matchResult.result === 'loss'
+                    ? 'DEFEAT'
+                    : 'STALEMATE · DRAW'}
+              </h1>
+              <p className="arena-result-sub-lore">
+                {matchResult.result === 'win'
+                  ? 'Your algorithm conquered the Gate trial and surpassed your opponent.'
+                  : matchResult.result === 'loss'
+                    ? 'Your mana reserves depleted before conquering the challenge.'
+                    : 'Both combatants displayed equivalent algorithmic mastery.'}
+              </p>
+            </div>
+
+            {/* Combatants Results Comparison */}
+            <div className="arena-result-combatants-stage">
+              <div className="arena-result-fighter you">
+                <span className="arena-fighter-label">YOU</span>
+                <strong className="arena-fighter-name">{youResult?.name || you.name}</strong>
+                <div className="arena-fighter-score">{youResult?.score ?? 0} pts</div>
+                <div className="arena-fighter-tests">
+                  {youResult?.passedCount ?? 0} / {youResult?.totalTests ?? 0} tests passed
+                </div>
+              </div>
+
+              <div className="arena-result-vs-pill">VS</div>
+
+              <div className="arena-result-fighter opponent">
+                <span className="arena-fighter-label">OPPONENT</span>
+                <strong className="arena-fighter-name">{oppResult?.name || opponent.name}</strong>
+                <div className="arena-fighter-score">{oppResult?.score ?? 0} pts</div>
+                <div className="arena-fighter-tests">
+                  {oppResult?.passedCount ?? 0} / {oppResult?.totalTests ?? 0} tests passed
+                </div>
+              </div>
+            </div>
+
+            {/* Rating Progression Card */}
+            <div className="arena-result-rating-panel">
+              <span className="arena-kicker">Rating Adjustment</span>
+              <div className="arena-rating-transition-row">
+                <span className="arena-res-rating before">{resultRatingBefore} SR</span>
+                <span className="arena-res-arrow">➔</span>
+                <span className="arena-res-rating after">{resultRatingAfter} SR</span>
+                <span className={`arena-res-delta ${resultRatingDelta >= 0 ? 'positive' : 'negative'}`}>
+                  ({resultRatingDelta >= 0 ? `+${resultRatingDelta}` : resultRatingDelta} SR)
+                </span>
+              </div>
+
+              {hasDivisionChanged && (
+                <div className="arena-res-division-alert">
+                  <span>🎖️</span>
+                  <strong>
+                    {resultRatingDelta > 0
+                      ? `PROMOTED TO ${divAfter.toUpperCase()} DIVISION!`
+                      : `DEMOTED TO ${divAfter.toUpperCase()} DIVISION`}
+                  </strong>
+                </div>
+              )}
+            </div>
+
+            {/* Confirmed Server Rewards */}
+            <div className="arena-result-rewards-panel">
+              <span className="arena-kicker">Rewards Confirmed</span>
+              <div className="arena-result-rewards-chips">
+                {matchResult.result === 'win' && (
+                  <div className="arena-res-reward-chip">
+                    <span className="arena-reward-chip-icon">⚡</span>
+                    <span>+100 Hunter XP</span>
+                  </div>
+                )}
+                <div className="arena-res-reward-chip">
+                  <span className="arena-reward-chip-icon">🏆</span>
+                  <span>
+                    {matchResult.result === 'win'
+                      ? '+150 Season XP'
+                      : matchResult.result === 'draw'
+                        ? '+80 Season XP'
+                        : '+50 Season XP'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="arena-result-card-actions">
+              <button
+                type="button"
+                className="arena-btn arena-btn-primary arena-btn-lg"
+                onClick={onExitMatch}
+              >
+                Return to Arena Dashboard
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  FIND MATCH SECTION (PHASE 2 MATCHMAKING STATE MACHINE)
 // ═══════════════════════════════════════════════════════════════════
 
@@ -949,106 +1976,19 @@ function FindMatchSection({
         </div>
       )}
 
-      {/* ─── State: MATCH READY / LOBBY ──────────────────────────── */}
+      {/* ─── State: MATCH READY / LIVE CODING WORKSPACE ────────────── */}
       {mmState.status === 'ready' && (
-        <div className="arena-mm-card ready-card animate-fadeInUp">
-          {(() => {
-            const match = mmState.match;
-            const you = match.player1.isYou ? match.player1 : match.player2;
-            const opponent = match.player1.isYou ? match.player2 : match.player1;
-            const yourDivInfo = getDivisionInfo(getDivision(you.ratingBefore));
-            const oppDivInfo = getDivisionInfo(getDivision(opponent.ratingBefore));
-
-            return (
-              <>
-                <div className="arena-ready-header">
-                  <div>
-                    <span className="arena-kicker">Match Active · {match.matchType.toUpperCase()}</span>
-                    <h2>Match Lobby: #{match.id.slice(0, 16)}</h2>
-                  </div>
-                  <span className={`arena-match-status-pill ${match.status}`}>
-                    {match.status.replace('_', ' ').toUpperCase()}
-                  </span>
-                </div>
-
-                <div className="arena-vs-stage compact">
-                  <div className="arena-combatant-card you">
-                    <div className="arena-combatant-emblem" style={{ borderColor: yourDivInfo.color }}>
-                      <span>{yourDivInfo.icon}</span>
-                    </div>
-                    <div className="arena-combatant-info">
-                      <span className="arena-combatant-label">YOU</span>
-                      <strong className="arena-combatant-name">{you.name}</strong>
-                      <span className="arena-combatant-sr">{you.ratingBefore} SR</span>
-                    </div>
-                  </div>
-
-                  <div className="arena-vs-divider">
-                    <span className="arena-vs-text">VS</span>
-                  </div>
-
-                  <div className="arena-combatant-card opponent">
-                    <div className="arena-combatant-emblem" style={{ borderColor: oppDivInfo.color }}>
-                      <span>{oppDivInfo.icon}</span>
-                    </div>
-                    <div className="arena-combatant-info">
-                      <span className="arena-combatant-label">OPPONENT</span>
-                      <strong className="arena-combatant-name">{opponent.name}</strong>
-                      <span className="arena-combatant-sr">{opponent.ratingBefore} SR</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Challenge Details */}
-                <div className="arena-ready-challenge-card">
-                  <div className="arena-ready-challenge-head">
-                    <div>
-                      <span className="arena-kicker">Algorithm Challenge</span>
-                      <h3>{match.challenge.title}</h3>
-                    </div>
-                    <span className="arena-badge-function">
-                      def {match.challenge.functionName}()
-                    </span>
-                  </div>
-                  <p className="arena-challenge-lesson">{match.challenge.lesson}</p>
-                </div>
-
-                {/* Phase Notice */}
-                <div className="arena-phase-notice">
-                  <span className="arena-phase-notice-icon">💡</span>
-                  <div>
-                    <strong>Match Session Initialized</strong>
-                    <p>
-                      Match room and opponents are locked in server state. In Phase 3, the live Python code editor, real-time timer, and test evaluation will run directly here.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="arena-ready-footer-actions">
-                  <button
-                    type="button"
-                    className="arena-btn arena-btn-secondary"
-                    onClick={() => {
-                      navigate('/arena');
-                      setMmState({ status: 'idle' });
-                    }}
-                  >
-                    ← Back to Arena Overview
-                  </button>
-                  {match.status === 'ready' && (
-                    <button
-                      type="button"
-                      className="arena-btn arena-btn-danger"
-                      onClick={() => void handleCancelActiveMatch(match.id)}
-                    >
-                      Cancel Match (Untouched)
-                    </button>
-                  )}
-                </div>
-              </>
-            );
-          })()}
-        </div>
+        <ArenaMatchWorkspace
+          initialMatch={mmState.match}
+          token={token!}
+          onExitMatch={() => {
+            navigate('/arena');
+            setMmState({ status: 'idle' });
+            onProfileUpdate();
+          }}
+          onProfileUpdate={onProfileUpdate}
+          onCancelMatch={handleCancelActiveMatch}
+        />
       )}
 
       {/* ─── State: IDLE ─────────────────────────────────────────── */}
