@@ -414,6 +414,39 @@ export const ACHIEVEMENT_DEFINITIONS = [
         : `Unlock ${10 - stats.skillsUnlockedCount} more skills`,
     }),
   },
+  // ─── Tournaments ────────────────────────────────────────────────────────────
+  {
+    id: 'ach_tourn_contender',
+    name: 'Arena Contender',
+    description: 'Register and enter your first coding tournament.',
+    category: 'progression',
+    icon: '⚔️',
+    rarity: 'rare',
+    target: 1,
+    xpReward: 200,
+    titleReward: 'Contender',
+    check: (stats) => ({
+      progress: Math.min(1, stats.tournamentsEnteredCount || 0),
+      isUnlocked: (stats.tournamentsEnteredCount || 0) >= 1,
+      remainingRequirement: (stats.tournamentsEnteredCount || 0) >= 1 ? 'Completed' : 'Enter 1 tournament',
+    }),
+  },
+  {
+    id: 'ach_tourn_champion',
+    name: 'Tournament Champion',
+    description: 'Win first place in a single-elimination tournament.',
+    category: 'mastery',
+    icon: '🏆',
+    rarity: 'legendary',
+    target: 1,
+    xpReward: 1000,
+    titleReward: 'Grand Champion',
+    check: (stats) => ({
+      progress: Math.min(1, stats.tournamentsWonCount || 0),
+      isUnlocked: (stats.tournamentsWonCount || 0) >= 1,
+      remainingRequirement: (stats.tournamentsWonCount || 0) >= 1 ? 'Completed' : 'Win 1 tournament',
+    }),
+  },
 ];
 
 export const ACHIEVEMENT_MAP = Object.fromEntries(
@@ -495,6 +528,16 @@ export function getPlayerAchievementStats(userId) {
     promotionsCompletedCount = rankIndex;
   }
 
+  // Tournaments
+  let tournamentsEnteredCount = 0;
+  let tournamentsWonCount = 0;
+  try {
+    const tEntered = db.prepare('SELECT COUNT(*) as c FROM tournament_participants WHERE user_id = ?').get(userId);
+    tournamentsEnteredCount = tEntered ? tEntered.c : 0;
+    const tWon = db.prepare('SELECT COUNT(*) as c FROM tournament_participants WHERE user_id = ? AND final_rank = 1').get(userId);
+    tournamentsWonCount = tWon ? tWon.c : 0;
+  } catch {}
+
   return {
     playerRank,
     playerLevel,
@@ -512,6 +555,8 @@ export function getPlayerAchievementStats(userId) {
     dailyChestsClaimedCount,
     skillsUnlockedCount,
     promotionsCompletedCount,
+    tournamentsEnteredCount,
+    tournamentsWonCount,
   };
 }
 

@@ -79,8 +79,12 @@ import {
   registerForTournament,
   withdrawFromTournament,
   startTournament,
+  cancelTournament,
+  startTournamentMatch,
   submitTournamentMatch,
   claimTournamentReward,
+  getSpectatorMatch,
+  getTournamentLiveMatches,
   recordSeasonalXp,
 } from './seasons.mjs';
 
@@ -112,7 +116,7 @@ function categorizeError(evalResult) {
     }
     return { type: 'runtime', message: `Runtime Error: ${evalResult.error?.split('\n')[0] || 'Unknown error'}` };
   }
-  
+
   if (!evalResult.allPassed) {
     const failedTest = evalResult.results.find(r => !r.passed);
     if (failedTest?.error) {
@@ -120,7 +124,7 @@ function categorizeError(evalResult) {
     }
     return { type: 'incorrect_output', message: `Incorrect Output: Test "${failedTest?.description || 'unknown'}" failed. Expected ${JSON.stringify(failedTest?.expected)}, got ${JSON.stringify(failedTest?.actual)}.` };
   }
-  
+
   return { type: 'success', message: 'All tests passed!' };
 }
 
@@ -476,7 +480,7 @@ const server = http.createServer(async (req, res) => {
     const challengeId = url.searchParams.get('challengeId');
     const token = getBearerToken(req);
     const session = verifySession(token);
-    
+
     if (!challengeId) {
       return sendJson(res, 400, { error: 'Missing challengeId parameter.' });
     }
@@ -484,11 +488,11 @@ const server = http.createServer(async (req, res) => {
     if (!challenge) {
       return sendJson(res, 404, { error: `Challenge '${challengeId}' not found.` });
     }
-    
-    const hasPrereqs = session 
+
+    const hasPrereqs = session
       ? hasMasteredPrerequisites(session.id, challengeId, challenge.prerequisiteIds)
       : true; // Allow unauthenticated users to view
-    
+
     return sendJson(res, 200, {
       hasPrerequisites: hasPrereqs,
       prerequisiteIds: challenge.prerequisiteIds,
@@ -711,10 +715,10 @@ const server = http.createServer(async (req, res) => {
       if (!challenge.isPractice && challenge.prerequisiteIds && challenge.prerequisiteIds.length > 0) {
         const hasPrereqs = hasMasteredPrerequisites(session.id, challengeId, challenge.prerequisiteIds);
         if (!hasPrereqs) {
-          const unmet = challenge.prerequisiteIds.filter(pid => 
+          const unmet = challenge.prerequisiteIds.filter(pid =>
             !db.prepare('SELECT 1 FROM challenge_mastery WHERE user_id = ? AND challenge_id = ?').get(session.id, pid)
           );
-          return sendJson(res, 403, { 
+          return sendJson(res, 403, {
             error: 'Prerequisites not met. Complete previous challenges first.',
             unmetPrerequisites: unmet,
             code: 'PREREQUISITES_NOT_MET'
@@ -768,7 +772,7 @@ const server = http.createServer(async (req, res) => {
         // Only award XP for main challenges, not practice challenges
         const xpReward = challenge.isPractice ? 0 : challenge.xpReward;
         xpAwardResult = awardQuestCompletionAtomic(session.id, challenge.questId, xpReward);
-        
+
         // Track concept mastery and challenge mastery
         // For main challenges: only on first completion (not duplicates)
         // For practice challenges: always update concept mastery on successful completion
@@ -781,7 +785,7 @@ const server = http.createServer(async (req, res) => {
             const targetLevel = challenge.isPractice ? 5 : 3;
             updateConceptMastery(session.id, challenge.conceptId, targetLevel);
           }
-          
+
           // Record challenge mastery (only for main challenges)
           if (!challenge.isPractice) {
             recordChallengeMastery(session.id, challengeId, challenge.questId);
@@ -817,7 +821,7 @@ const server = http.createServer(async (req, res) => {
       if (allPassed) {
         const activityType = challenge.isPractice ? 'practice_challenge' : 'main_challenge';
         recordLearningActivity(session.id, activityType, challengeId);
-        
+
         // Also record concept mastery activity if conceptId exists
         if (challenge.conceptId) {
           recordLearningActivity(session.id, 'concept_mastery', challenge.conceptId);
@@ -962,7 +966,7 @@ const server = http.createServer(async (req, res) => {
         executeInPythonProcess,
         buildHarnessScript
       );
-      
+
       // If promotion succeeded, refresh profile
       if (result.success && result.profile) {
         recordGuildActivity(session.id, 'promotion_trial', trialId, result.xpAwarded || 0);
@@ -971,9 +975,9 @@ const server = http.createServer(async (req, res) => {
       }
 
       const isClientError = result.errorType === 'requirements_not_met' ||
-                            result.errorType === 'not_eligible' ||
-                            result.errorType === 'invalid_trial' ||
-                            result.errorType === 'challenge_not_found';
+        result.errorType === 'not_eligible' ||
+        result.errorType === 'invalid_trial' ||
+        result.errorType === 'challenge_not_found';
       return sendJson(res, isClientError ? 400 : 200, result);
     } catch (err) {
       return sendJson(res, 500, { error: `Promotion trial error: ${err.message}` });
@@ -1766,6 +1770,19 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, result);
   }
 
+  // ─── Arena: Spectate Match ──────────────────────────────────────────────
+  const arenaSpectateMatch = url.pathname.match(/^\/api\/arena\/matches\/([a-zA-Z0-9_-]+)\/spectate$/);
+  if (req.method === 'GET' && arenaSpectateMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) return sendJson(res, 401, { error: 'Authentication required.' });
+    const match = getSpectatorMatch(arenaSpectateMatch[1]);
+    if (!match) {
+      return sendJson(res, 404, { error: 'Match not found.' });
+    }
+    return sendJson(res, 200, { match });
+  }
+
   // ─── Arena: Get Match Details ────────────────────────────────────────────
   const arenaGetMatch = url.pathname.match(/^\/api\/arena\/matches\/([a-zA-Z0-9_-]+)$/);
   if (req.method === 'GET' && arenaGetMatch) {
@@ -1785,6 +1802,17 @@ const server = http.createServer(async (req, res) => {
     const session = verifySession(token);
     const list = getTournamentsList(session ? session.id : null);
     return sendJson(res, 200, { tournaments: list });
+  }
+
+  // ─── Tournaments: Live Matches for Spectating ────────────────────────────
+  const tournLiveMatch = url.pathname.match(/^\/api\/tournaments\/([a-zA-Z0-9_-]+)\/live$/);
+  if (req.method === 'GET' && tournLiveMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) return sendJson(res, 401, { error: 'Authentication required.' });
+    const tournamentId = tournLiveMatch[1];
+    const matches = getTournamentLiveMatches(tournamentId);
+    return sendJson(res, 200, { matches });
   }
 
   // ─── Tournaments: Create Tournament ──────────────────────────────────────
@@ -1847,9 +1875,41 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 401, { error: 'Authentication required.' });
     }
     const tournamentId = tournStartMatch[1];
-    const result = startTournament(tournamentId);
+    const result = startTournament(tournamentId, session.id);
     if (!result.success) {
-      return sendJson(res, 400, { error: result.error });
+      return sendJson(res, result.unauthorized ? 403 : 400, { error: result.error });
+    }
+    return sendJson(res, 200, result);
+  }
+
+  // ─── Tournaments: Cancel Tournament ──────────────────────────────────────
+  const tournCancelMatch = url.pathname.match(/^\/api\/tournaments\/([a-zA-Z0-9_-]+)\/cancel$/);
+  if (req.method === 'POST' && tournCancelMatch) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    const tournamentId = tournCancelMatch[1];
+    const result = cancelTournament(tournamentId, session.id);
+    if (!result.success) {
+      return sendJson(res, result.unauthorized ? 403 : 400, { error: result.error });
+    }
+    return sendJson(res, 200, result);
+  }
+
+  // ─── Tournaments: Start Match ────────────────────────────────────────────
+  const tournMatchStart = url.pathname.match(/^\/api\/tournaments\/([a-zA-Z0-9_-]+)\/matches\/([a-zA-Z0-9_-]+)\/start$/);
+  if (req.method === 'POST' && tournMatchStart) {
+    const token = getBearerToken(req);
+    const session = verifySession(token);
+    if (!session) {
+      return sendJson(res, 401, { error: 'Authentication required.' });
+    }
+    const matchId = tournMatchStart[2];
+    const result = startTournamentMatch(matchId, session.id);
+    if (!result.success) {
+      return sendJson(res, result.unauthorized ? 403 : 400, { error: result.error });
     }
     return sendJson(res, 200, result);
   }

@@ -14,7 +14,7 @@
 import crypto from 'node:crypto';
 import { db } from './db.mjs';
 import { awardQuestCompletionAtomic, getXpRequiredForLevel } from './auth.mjs';
-import { unlockUserTitle } from './achievements.mjs';
+import { unlockUserTitle, checkAndUnlockAchievements } from './achievements.mjs';
 import { serverChallenges } from './challenges.mjs';
 
 function getPositiveSetting(name, fallback) {
@@ -204,13 +204,14 @@ export function initSeasonTables() {
       format TEXT NOT NULL DEFAULT 'single_elimination',
       max_participants INTEGER NOT NULL DEFAULT 8,
       current_participants INTEGER NOT NULL DEFAULT 0,
-      status TEXT NOT NULL DEFAULT 'registration', -- 'upcoming', 'registration', 'in_progress', 'completed'
+      status TEXT NOT NULL DEFAULT 'registration', -- 'upcoming', 'registration', 'in_progress', 'completed', 'cancelled'
       start_time TEXT,
       end_time TEXT,
       current_round INTEGER NOT NULL DEFAULT 1,
       total_rounds INTEGER NOT NULL DEFAULT 3,
       rewards_json TEXT NOT NULL,
       winner_id TEXT,
+      created_by TEXT REFERENCES users(id),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -265,6 +266,11 @@ export function initSeasonTables() {
 }
 
 function ensureArenaMigration() {
+  const tournCols = db.prepare('PRAGMA table_info(tournaments)').all();
+  if (!tournCols.some((column) => column.name === 'created_by')) {
+    db.exec('ALTER TABLE tournaments ADD COLUMN created_by TEXT REFERENCES users(id)');
+  }
+
   const columns = db.prepare('PRAGMA table_info(arena_matches)').all();
   if (!columns.some((column) => column.name === 'deadline_at')) {
     db.exec('ALTER TABLE arena_matches ADD COLUMN deadline_at TEXT');
@@ -1431,17 +1437,18 @@ export async function submitArenaMatch(userId, matchId, code, executeInPythonPro
       attemptNumber,
       nowIso
     );
+    const isFinalized = allPassed || attemptNumber >= ARENA_MAX_SUBMISSION_ATTEMPTS;
     db.prepare(`
       UPDATE arena_matches
       SET ${statusField} = ?, ${scoreField} = ?, ${passedField} = ?,
           ${totalField} = ?, ${timeField} = ?
       WHERE id = ?
-    `).run(allPassed ? 'completed' : 'submitted', score, passedCount, totalCount, elapsedMs, matchId);
+    `).run(isFinalized ? 'completed' : 'submitted', score, passedCount, totalCount, elapsedMs, matchId);
     db.prepare(`
       UPDATE arena_match_participants
       SET state = ?, updated_at = ?
       WHERE match_id = ? AND user_id = ?
-    `).run(allPassed ? 'completed' : 'submitted', nowIso, matchId, userId);
+    `).run(isFinalized ? 'completed' : 'submitted', nowIso, matchId, userId);
     db.prepare('DELETE FROM arena_submission_locks WHERE match_id = ? AND user_id = ?')
       .run(matchId, userId);
 
@@ -1568,6 +1575,8 @@ function concludeMatch(matchId, terminalStatus = 'completed') {
       return;
     }
 
+    const isTournament = match.match_type === 'tournament';
+
     if (match.player1_status === 'forfeited') winnerId = match.player2_id;
     else if (match.player2_status === 'forfeited') winnerId = match.player1_id;
     else if (match.player1_status === 'timed_out' && match.player2_status !== 'timed_out') winnerId = match.player2_id;
@@ -1580,6 +1589,33 @@ function concludeMatch(matchId, terminalStatus = 'completed') {
     else if (match.player2_time_ms < match.player1_time_ms && match.player2_time_ms > 0) winnerId = match.player2_id;
     else winnerId = 'draw';
 
+    // Deterministic tournament tiebreaking: tournament matches must NEVER conclude in a draw
+    if (isTournament && winnerId === 'draw') {
+      const p1Part = db.prepare('SELECT attempts_count FROM arena_match_participants WHERE match_id = ? AND user_id = ?').get(matchId, match.player1_id);
+      const p2Part = db.prepare('SELECT attempts_count FROM arena_match_participants WHERE match_id = ? AND user_id = ?').get(matchId, match.player2_id);
+      const p1Attempts = p1Part?.attempts_count || 0;
+      const p2Attempts = p2Part?.attempts_count || 0;
+
+      if (p1Attempts > 0 && p2Attempts > 0 && p1Attempts !== p2Attempts) {
+        winnerId = p1Attempts < p2Attempts ? match.player1_id : match.player2_id;
+      } else {
+        const tm = db.prepare('SELECT tournament_id FROM tournament_matches WHERE arena_match_id = ?').get(matchId);
+        if (tm) {
+          const p1SeedRow = db.prepare('SELECT seed FROM tournament_participants WHERE tournament_id = ? AND user_id = ?').get(tm.tournament_id, match.player1_id);
+          const p2SeedRow = db.prepare('SELECT seed FROM tournament_participants WHERE tournament_id = ? AND user_id = ?').get(tm.tournament_id, match.player2_id);
+          const p1Seed = p1SeedRow?.seed ?? 9999;
+          const p2Seed = p2SeedRow?.seed ?? 9999;
+          if (p1Seed !== p2Seed) {
+            winnerId = p1Seed < p2Seed ? match.player1_id : match.player2_id;
+          } else {
+            winnerId = match.player1_id;
+          }
+        } else {
+          winnerId = match.player1_id;
+        }
+      }
+    }
+
     const p1Profile = getArenaProfile(match.player1_id);
     const p2Profile = match.player2_id.startsWith('ai_shadow_')
       ? { rating: match.p2_rating_before, matchesPlayed: 10 }
@@ -1588,36 +1624,51 @@ function concludeMatch(matchId, terminalStatus = 'completed') {
 
     p1ScoreFactor = winnerId === match.player1_id ? 1 : winnerId === 'draw' ? 0.5 : 0;
     p2ScoreFactor = winnerId === match.player2_id ? 1 : winnerId === 'draw' ? 0.5 : 0;
-    p1Delta = calculateEloChange(match.p1_rating_before, match.p2_rating_before, p1ScoreFactor, p1Profile.matchesPlayed);
-    p2Delta = calculateEloChange(match.p2_rating_before, match.p1_rating_before, p2ScoreFactor, p2Profile.matchesPlayed);
-    p1RatingAfter = Math.max(0, match.p1_rating_before + p1Delta);
-    p2RatingAfter = Math.max(0, match.p2_rating_before + p2Delta);
+
+    // Step 2: Ranked Rating Isolation
+    if (isTournament) {
+      // Tournament matches NEVER modify normal Ranked Arena Elo
+      p1Delta = 0;
+      p2Delta = 0;
+      p1RatingAfter = match.p1_rating_before;
+      p2RatingAfter = match.p2_rating_before;
+    } else {
+      p1Delta = calculateEloChange(match.p1_rating_before, match.p2_rating_before, p1ScoreFactor, p1Profile.matchesPlayed);
+      p2Delta = calculateEloChange(match.p2_rating_before, match.p1_rating_before, p2ScoreFactor, p2Profile.matchesPlayed);
+      p1RatingAfter = Math.max(0, match.p1_rating_before + p1Delta);
+      p2RatingAfter = Math.max(0, match.p2_rating_before + p2Delta);
+    }
 
     db.prepare(`
       UPDATE arena_matches
       SET status = ?, winner_id = ?, p1_rating_after = ?, p2_rating_after = ?, end_time = ?
       WHERE id = ? AND status IN ('waiting', 'ready', 'in_progress')
     `).run(terminalStatus, winnerId, p1RatingAfter, p2RatingAfter, nowIso, matchId);
-    updatePlayerArenaProfile(match.player1_id, p1RatingAfter, p1ScoreFactor, p1Delta, matchId);
-    if (!match.player2_id.startsWith('ai_shadow_')) {
-      updatePlayerArenaProfile(match.player2_id, p2RatingAfter, p2ScoreFactor, p2Delta, matchId);
+
+    // Only update ranked arena profile and rating history for ranked matches
+    if (!isTournament) {
+      updatePlayerArenaProfile(match.player1_id, p1RatingAfter, p1ScoreFactor, p1Delta, matchId);
+      if (!match.player2_id.startsWith('ai_shadow_')) {
+        updatePlayerArenaProfile(match.player2_id, p2RatingAfter, p2ScoreFactor, p2Delta, matchId);
+      }
     }
+
     db.prepare('UPDATE arena_match_participants SET active = 0, updated_at = ? WHERE match_id = ?')
       .run(nowIso, matchId);
     db.prepare('DELETE FROM arena_submission_locks WHERE match_id = ?').run(matchId);
 
     if (winnerId !== 'draw' && !winnerId.startsWith('ai_shadow_')) {
-      awardArenaMatchXp(winnerId, matchId, 100, nowIso);
+      awardArenaMatchXp(winnerId, matchId, isTournament ? 150 : 100, nowIso);
     }
     recordArenaSeasonXp(
       match.player1_id,
-      p1ScoreFactor === 1 ? 150 : p1ScoreFactor === 0.5 ? 80 : 50,
+      p1ScoreFactor === 1 ? (isTournament ? 200 : 150) : p1ScoreFactor === 0.5 ? 80 : 50,
       nowIso
     );
     if (!match.player2_id.startsWith('ai_shadow_')) {
       recordArenaSeasonXp(
         match.player2_id,
-        p2ScoreFactor === 1 ? 150 : p2ScoreFactor === 0.5 ? 80 : 50,
+        p2ScoreFactor === 1 ? (isTournament ? 200 : 150) : p2ScoreFactor === 0.5 ? 80 : 50,
         nowIso
       );
     }
@@ -1906,7 +1957,7 @@ export function getTournamentsList(userId = null) {
   const rows = db.prepare(`
     SELECT t.id, t.season_id as seasonId, t.title, t.description, t.format,
            t.max_participants as maxParticipants, t.current_participants as currentParticipants,
-           t.status, t.start_time as startTime, t.current_round as currentRound,
+           t.status, t.created_by as createdBy, t.start_time as startTime, t.current_round as currentRound,
            t.total_rounds as totalRounds, t.rewards_json as rewardsJson, t.winner_id as winnerId,
            (SELECT display_name FROM profiles WHERE user_id = t.winner_id) as winnerName
     FROM tournaments t
@@ -1924,6 +1975,7 @@ export function getTournamentsList(userId = null) {
       ...t,
       rewards: JSON.parse(t.rewardsJson || '{}'),
       isRegistered,
+      isCreator: userId ? t.createdBy === userId : false,
     };
   });
 }
@@ -1974,6 +2026,7 @@ export function getTournamentDetails(tournamentId, userId = null) {
 
   let userContext = {
     isRegistered: false,
+    isCreator: userId ? t.created_by === userId : false,
     participant: null,
     activeMatchId: null,
     canClaimReward: false,
@@ -2019,6 +2072,7 @@ export function getTournamentDetails(tournamentId, userId = null) {
     maxParticipants: t.max_participants,
     currentParticipants: t.current_participants,
     status: t.status,
+    createdBy: t.created_by,
     startTime: t.start_time,
     endTime: t.end_time,
     currentRound: t.current_round,
@@ -2066,9 +2120,9 @@ export function createTournament(userId, data) {
     INSERT INTO tournaments (
       id, season_id, title, description, format,
       max_participants, current_participants, status,
-      start_time, total_rounds, rewards_json, created_at, updated_at
+      start_time, total_rounds, rewards_json, created_by, created_at, updated_at
     )
-    VALUES (?, 'season-1', ?, ?, 'single_elimination', ?, 0, 'registration', ?, ?, ?, ?, ?)
+    VALUES (?, 'season-1', ?, ?, 'single_elimination', ?, 0, 'registration', ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     data.title.trim(),
@@ -2077,6 +2131,7 @@ export function createTournament(userId, data) {
     data.startTime || nowIso,
     totalRounds,
     JSON.stringify(rewards),
+    userId || null,
     nowIso,
     nowIso
   );
@@ -2122,6 +2177,12 @@ export function registerForTournament(userId, tournamentId) {
     `).run(nowIso, tournamentId);
 
     db.exec('COMMIT');
+
+    // Trigger tournament participation achievement check
+    try {
+      checkAndUnlockAchievements(userId);
+    } catch {}
+
     return { success: true, currentParticipants: t.current_participants + 1 };
   } catch (err) {
     try { db.exec('ROLLBACK'); } catch {}
@@ -2165,10 +2226,16 @@ export function withdrawFromTournament(userId, tournamentId) {
 /**
  * Starts tournament and generates single-elimination bracket.
  * Robustly handles odd participant counts with automatic byes!
+ * Restricted to the tournament creator (or admin if no creator is set).
  */
-export function startTournament(tournamentId) {
+export function startTournament(tournamentId, requestingUserId = null) {
   const t = db.prepare('SELECT * FROM tournaments WHERE id = ?').get(tournamentId);
   if (!t) return { success: false, error: 'Tournament not found.' };
+
+  // Step 1: Authorization
+  if (t.created_by && requestingUserId && t.created_by !== requestingUserId) {
+    return { success: false, unauthorized: true, error: 'Unauthorized: Only the tournament creator can start this tournament.' };
+  }
 
   if (t.status !== 'registration') {
     return { success: false, error: 'Tournament has already started or completed.' };
@@ -2272,6 +2339,152 @@ export function startTournament(tournamentId) {
 }
 
 /**
+ * Step 3: Cancels a tournament safely.
+ * Only the creator can cancel. In-progress arena matches are terminated cleanly.
+ */
+export function cancelTournament(tournamentId, requestingUserId = null) {
+  const t = db.prepare('SELECT * FROM tournaments WHERE id = ?').get(tournamentId);
+  if (!t) return { success: false, error: 'Tournament not found.' };
+
+  // Authorization check
+  if (t.created_by && requestingUserId && t.created_by !== requestingUserId) {
+    return { success: false, unauthorized: true, error: 'Unauthorized: Only the tournament creator can cancel this tournament.' };
+  }
+
+  if (t.status === 'completed') {
+    return { success: false, error: 'Cannot cancel a completed tournament.' };
+  }
+
+  if (t.status === 'cancelled') {
+    return { success: false, error: 'Tournament is already cancelled.' };
+  }
+
+  const nowIso = new Date().toISOString();
+
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    // If in progress, cancel any active arena matches and participants
+    const activeMatches = db.prepare(`
+      SELECT arena_match_id FROM tournament_matches
+      WHERE tournament_id = ? AND arena_match_id IS NOT NULL AND status IN ('scheduled', 'in_progress')
+    `).all(tournamentId);
+
+    for (const m of activeMatches) {
+      db.prepare("UPDATE arena_matches SET status = 'cancelled', end_time = ? WHERE id = ? AND status IN ('waiting', 'ready', 'in_progress')")
+        .run(nowIso, m.arena_match_id);
+      db.prepare("UPDATE arena_match_participants SET active = 0, state = 'forfeited', updated_at = ? WHERE match_id = ?")
+        .run(nowIso, m.arena_match_id);
+      db.prepare('DELETE FROM arena_submission_locks WHERE match_id = ?').run(m.arena_match_id);
+    }
+
+    db.prepare("UPDATE tournament_matches SET status = 'cancelled' WHERE tournament_id = ? AND status != 'completed'")
+      .run(tournamentId);
+
+    db.prepare("UPDATE tournaments SET status = 'cancelled', updated_at = ? WHERE id = ?")
+      .run(nowIso, tournamentId);
+
+    db.exec('COMMIT');
+    return { success: true, tournamentId, status: 'cancelled' };
+  } catch (err) {
+    try { db.exec('ROLLBACK'); } catch {}
+    throw err;
+  }
+}
+
+/**
+ * Step 4: Starts an individual tournament match and initializes its backing arena match.
+ * Ensures the match workspace (Phase 3) can cleanly mount and run duel tests.
+ */
+export function startTournamentMatch(tournamentMatchId, requestingUserId = null) {
+  const tm = db.prepare('SELECT * FROM tournament_matches WHERE id = ?').get(tournamentMatchId);
+  if (!tm) return { success: false, error: 'Tournament match not found.' };
+
+  if (tm.status === 'completed' || tm.status === 'bye') {
+    return { success: false, error: 'This tournament match is already completed.' };
+  }
+
+  if (tm.status === 'cancelled') {
+    return { success: false, error: 'This tournament match is cancelled.' };
+  }
+
+  // If already backed by an arena match, return it
+  if (tm.arena_match_id) {
+    const existing = db.prepare('SELECT id, status FROM arena_matches WHERE id = ?').get(tm.arena_match_id);
+    if (existing && ['waiting', 'ready', 'in_progress'].includes(existing.status)) {
+      return { success: true, matchId: tm.arena_match_id, tournamentMatchId };
+    }
+  }
+
+  // Both players must be present
+  if (!tm.player1_id || !tm.player2_id) {
+    return { success: false, error: 'Both players must be determined before starting the match.' };
+  }
+
+  // Authorization: must be player1, player2, or tournament creator
+  const t = db.prepare('SELECT created_by FROM tournaments WHERE id = ?').get(tm.tournament_id);
+  if (requestingUserId) {
+    const isP1 = tm.player1_id === requestingUserId;
+    const isP2 = tm.player2_id === requestingUserId;
+    const isCreator = t?.created_by === requestingUserId;
+    if (!isP1 && !isP2 && !isCreator) {
+      return { success: false, unauthorized: true, error: 'Unauthorized: Only match participants or tournament creator can start this match.' };
+    }
+  }
+
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+  const deadlineAt = new Date(now + ARENA_MATCH_DURATION_SEC * 1000).toISOString();
+  const arenaMatchId = `tarena_${crypto.randomUUID()}`;
+
+  const p1 = db.prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(tm.player1_id);
+  const p2 = db.prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(tm.player2_id);
+  const p1Profile = getArenaProfile(tm.player1_id);
+  const p2Profile = getArenaProfile(tm.player2_id);
+
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare(`
+      INSERT INTO arena_matches (
+        id, season_id, challenge_id, match_type, player1_id, player2_id,
+        p1_name, p2_name, p1_rating_before, p2_rating_before,
+        status, duration_limit_sec, start_time, deadline_at, created_at
+      )
+      VALUES (?, 'season-1', ?, 'tournament', ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?)
+    `).run(
+      arenaMatchId,
+      tm.challenge_id,
+      tm.player1_id,
+      tm.player2_id,
+      p1?.display_name || tm.p1_name || 'Hunter',
+      p2?.display_name || tm.p2_name || 'Hunter',
+      p1Profile?.rating || 1000,
+      p2Profile?.rating || 1000,
+      ARENA_MATCH_DURATION_SEC,
+      nowIso,
+      deadlineAt,
+      nowIso
+    );
+
+    const addParticipant = db.prepare(`
+      INSERT INTO arena_match_participants
+        (id, match_id, user_id, slot, state, active, joined_at, updated_at)
+      VALUES (?, ?, ?, ?, 'ready', 1, ?, ?)
+    `);
+    addParticipant.run(`amp_${arenaMatchId}_1`, arenaMatchId, tm.player1_id, 1, nowIso, nowIso);
+    addParticipant.run(`amp_${arenaMatchId}_2`, arenaMatchId, tm.player2_id, 2, nowIso, nowIso);
+
+    db.prepare("UPDATE tournament_matches SET arena_match_id = ?, status = 'in_progress' WHERE id = ?")
+      .run(arenaMatchId, tournamentMatchId);
+
+    db.exec('COMMIT');
+    return { success: true, matchId: arenaMatchId, tournamentMatchId };
+  } catch (err) {
+    try { db.exec('ROLLBACK'); } catch {}
+    throw err;
+  }
+}
+
+/**
  * Advances a winner from a match node to the next match in the single-elimination bracket.
  */
 function advanceTournamentWinner(matchId, winnerId, winnerName) {
@@ -2319,29 +2532,9 @@ export async function submitTournamentMatch(userId, tournamentMatchId, code, exe
   // Create or retrieve backing arena match
   let arenaMatchId = tm.arena_match_id;
   if (!arenaMatchId) {
-    const nowIso = new Date().toISOString();
-    arenaMatchId = `tarena_${crypto.randomUUID()}`;
-    const p1 = db.prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(tm.player1_id);
-    const p2 = tm.player2_id ? db.prepare('SELECT display_name FROM profiles WHERE user_id = ?').get(tm.player2_id) : { display_name: 'Shadow Challenger' };
-
-    db.prepare(`
-      INSERT INTO arena_matches (
-        id, season_id, challenge_id, match_type, player1_id, player2_id,
-        p1_name, p2_name, p1_rating_before, p2_rating_before, status, duration_limit_sec, start_time, created_at
-      )
-      VALUES (?, 'season-1', ?, 'tournament', ?, ?, ?, ?, 1000, 1000, 'in_progress', 600, ?, ?)
-    `).run(
-      arenaMatchId,
-      tm.challenge_id,
-      tm.player1_id,
-      tm.player2_id || 'ai_shadow_challenger',
-      p1?.display_name || 'Hunter',
-      p2?.display_name || 'Hunter',
-      nowIso,
-      nowIso
-    );
-
-    db.prepare('UPDATE tournament_matches SET arena_match_id = ?, status = \'in_progress\' WHERE id = ?').run(arenaMatchId, tournamentMatchId);
+    const startRes = startTournamentMatch(tournamentMatchId, userId);
+    if (!startRes.success) return startRes;
+    arenaMatchId = startRes.matchId;
   }
 
   // Submit via standard arena submission pipeline
@@ -2398,6 +2591,11 @@ function handleTournamentMatchConclusion(tournamentMatchId, winnerId) {
         `).run(tm.tournament_id, winnerId);
 
         unlockUserTitle(winnerId, 'Tournament Champion', 'tournament');
+
+        // Trigger tournament winner achievements
+        try {
+          checkAndUnlockAchievements(winnerId);
+        } catch {}
       }
 
       if (loserId && !loserId.startsWith('ai_shadow_')) {
@@ -2478,6 +2676,127 @@ export function claimTournamentReward(userId, tournamentId) {
     try { db.exec('ROLLBACK'); } catch {}
     throw err;
   }
+}
+
+/**
+ * Step 7: Returns safe, sanitized match data for spectators.
+ * NEVER exposes hidden test cases, private submissions, or player auth/token information.
+ */
+export function getSpectatorMatch(matchId) {
+  cleanupArenaState();
+  const match = db.prepare('SELECT * FROM arena_matches WHERE id = ?').get(matchId);
+  if (!match) return null;
+
+  const challenge = serverChallenges[match.challenge_id];
+  if (!challenge) return null;
+
+  const startTimeMs = new Date(match.start_time).getTime();
+  const elapsedSec = Math.floor((Date.now() - startTimeMs) / 1000);
+  const remainingSec = Math.max(0, match.duration_limit_sec - elapsedSec);
+
+  const p1Participant = db.prepare('SELECT attempts_count FROM arena_match_participants WHERE match_id = ? AND user_id = ?').get(match.id, match.player1_id);
+  const p2Participant = db.prepare('SELECT attempts_count FROM arena_match_participants WHERE match_id = ? AND user_id = ?').get(match.id, match.player2_id);
+
+  // Tournament context if this is a tournament match
+  const tm = db.prepare(`
+    SELECT tm.id as tournamentMatchId, tm.round, tm.match_index as matchIndex,
+           t.id as tournamentId, t.title as tournamentTitle, t.total_rounds as totalRounds
+    FROM tournament_matches tm
+    JOIN tournaments t ON t.id = tm.tournament_id
+    WHERE tm.arena_match_id = ?
+  `).get(match.id);
+
+  return {
+    id: match.id,
+    seasonId: match.season_id,
+    matchType: match.match_type,
+    status: match.status,
+    challenge: {
+      id: challenge.id,
+      title: challenge.title,
+      functionName: challenge.functionName,
+      lesson: challenge.lesson,
+      sampleTests: challenge.sampleTests, // ONLY sample tests!
+    },
+    player1: {
+      id: match.player1_id,
+      name: match.p1_name,
+      ratingBefore: match.p1_rating_before,
+      ratingAfter: match.p1_rating_after,
+      score: match.player1_score,
+      passedCount: match.player1_passed_count,
+      totalTests: match.player1_total_tests,
+      timeMs: match.player1_time_ms,
+      status: match.player1_status,
+      attemptsCount: p1Participant?.attempts_count || 0,
+    },
+    player2: {
+      id: match.player2_id,
+      name: match.p2_name,
+      ratingBefore: match.p2_rating_before,
+      ratingAfter: match.p2_rating_after,
+      score: match.player2_score,
+      passedCount: match.player2_passed_count,
+      totalTests: match.player2_total_tests,
+      timeMs: match.player2_time_ms,
+      status: match.player2_status,
+      attemptsCount: p2Participant?.attempts_count || 0,
+    },
+    winnerId: match.winner_id,
+    winnerName: match.winner_id === match.player1_id ? match.p1_name : match.winner_id === match.player2_id ? match.p2_name : null,
+    durationLimitSec: match.duration_limit_sec,
+    remainingSeconds: remainingSec,
+    startTime: match.start_time,
+    deadlineAt: match.deadline_at,
+    endTime: match.end_time,
+    tournamentContext: tm ? {
+      tournamentId: tm.tournamentId,
+      tournamentTitle: tm.tournamentTitle,
+      tournamentMatchId: tm.tournamentMatchId,
+      round: tm.round,
+      totalRounds: tm.totalRounds,
+      matchIndex: tm.matchIndex,
+    } : null,
+  };
+}
+
+/**
+ * Returns all live matches for a given tournament.
+ */
+export function getTournamentLiveMatches(tournamentId) {
+  const matches = db.prepare(`
+    SELECT tm.id as tournamentMatchId, tm.round, tm.match_index as matchIndex,
+           tm.player1_id as p1Id, tm.p1_name as p1Name,
+           tm.player2_id as p2Id, tm.p2_name as p2Name,
+           tm.challenge_id as challengeId, tm.status as tournamentMatchStatus,
+           tm.arena_match_id as arenaMatchId,
+           am.status as arenaMatchStatus, am.start_time as startTime,
+           am.deadline_at as deadlineAt, am.duration_limit_sec as durationLimitSec
+    FROM tournament_matches tm
+    LEFT JOIN arena_matches am ON am.id = tm.arena_match_id
+    WHERE tm.tournament_id = ?
+      AND (tm.status = 'in_progress' OR (am.status IN ('ready', 'in_progress')))
+    ORDER BY tm.round DESC, tm.match_index ASC
+  `).all(tournamentId);
+
+  return matches.map((m) => {
+    let remainingSeconds = 0;
+    if (m.startTime && m.durationLimitSec) {
+      const elapsed = Math.floor((Date.now() - new Date(m.startTime).getTime()) / 1000);
+      remainingSeconds = Math.max(0, m.durationLimitSec - elapsed);
+    }
+    return {
+      tournamentMatchId: m.tournamentMatchId,
+      arenaMatchId: m.arenaMatchId,
+      round: m.round,
+      matchIndex: m.matchIndex,
+      challengeTitle: serverChallenges[m.challengeId]?.title || 'Coding Duel',
+      player1: { id: m.p1Id, name: m.p1Name },
+      player2: { id: m.p2Id, name: m.p2Name },
+      status: m.arenaMatchStatus || m.tournamentMatchStatus,
+      remainingSeconds,
+    };
+  });
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

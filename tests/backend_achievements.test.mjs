@@ -169,9 +169,9 @@ async function runTests() {
     const achRes = await get('/achievements', tokenA);
     assert.equal(achRes.status, 200, 'GET /achievements returns 200');
     assert.ok(Array.isArray(achRes.data.achievements), 'Achievements array returned');
-    assert.equal(achRes.data.achievements.length, 20, 'Returns full catalog of 20 achievements');
+    assert.equal(achRes.data.achievements.length, 22, 'Returns full catalog of 22 achievements');
     assert.equal(achRes.data.categories.length, 5, 'Returns 5 categories');
-    assert.equal(achRes.data.stats.total, 20, 'Stats total is 20');
+    assert.equal(achRes.data.stats.total, 22, 'Stats total is 22');
     assert.equal(achRes.data.stats.unlockedCount, 0, 'Initial unlocked count is 0');
     assert.equal(achRes.data.stats.totalXpEarned, 0, 'Initial achievement XP is 0');
 
