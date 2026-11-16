@@ -1552,7 +1552,7 @@ function recordArenaSeasonXp(userId, xpAmount, nowIso) {
  * Concludes a ranked or tournament match exactly once and persists both Elo
  * changes and the winner reward in the same SQLite transaction.
  */
-function concludeMatch(matchId, terminalStatus = 'completed') {
+export function concludeMatch(matchId, terminalStatus = 'completed') {
   if (!['completed', 'expired'].includes(terminalStatus)) {
     throw new TypeError('Invalid terminal status for an arena match.');
   }
@@ -1589,7 +1589,16 @@ function concludeMatch(matchId, terminalStatus = 'completed') {
     else if (match.player2_time_ms < match.player1_time_ms && match.player2_time_ms > 0) winnerId = match.player2_id;
     else winnerId = 'draw';
 
-    // Deterministic tournament tiebreaking: tournament matches must NEVER conclude in a draw
+    // Deterministic, fair tournament tiebreaker resolution.
+    // Tournament matches must NEVER conclude in a draw.
+    // Tiebreaker priority order:
+    // 1. Fewest submission attempts (efficiency: fewer attempts with equal score/time wins)
+    // 2. Higher tournament seed (better seed value, e.g. Seed #1 beats Seed #2)
+    // 3. Earlier tournament registration timestamp (seniority)
+    // 4. Deterministic cryptographic hash coin flip: SHA-256(matchId + ':' + userId).
+    //    The player whose individual match hash is lexicographically lower wins.
+    //    This completely eliminates positional bias (neither slot 1 nor slot 2 is favored)
+    //    while remaining 100% deterministic and reproducible across evaluations.
     if (isTournament && winnerId === 'draw') {
       const p1Part = db.prepare('SELECT attempts_count FROM arena_match_participants WHERE match_id = ? AND user_id = ?').get(matchId, match.player1_id);
       const p2Part = db.prepare('SELECT attempts_count FROM arena_match_participants WHERE match_id = ? AND user_id = ?').get(matchId, match.player2_id);
@@ -1601,17 +1610,26 @@ function concludeMatch(matchId, terminalStatus = 'completed') {
       } else {
         const tm = db.prepare('SELECT tournament_id FROM tournament_matches WHERE arena_match_id = ?').get(matchId);
         if (tm) {
-          const p1SeedRow = db.prepare('SELECT seed FROM tournament_participants WHERE tournament_id = ? AND user_id = ?').get(tm.tournament_id, match.player1_id);
-          const p2SeedRow = db.prepare('SELECT seed FROM tournament_participants WHERE tournament_id = ? AND user_id = ?').get(tm.tournament_id, match.player2_id);
+          const p1SeedRow = db.prepare('SELECT seed, registered_at FROM tournament_participants WHERE tournament_id = ? AND user_id = ?').get(tm.tournament_id, match.player1_id);
+          const p2SeedRow = db.prepare('SELECT seed, registered_at FROM tournament_participants WHERE tournament_id = ? AND user_id = ?').get(tm.tournament_id, match.player2_id);
           const p1Seed = p1SeedRow?.seed ?? 9999;
           const p2Seed = p2SeedRow?.seed ?? 9999;
+
           if (p1Seed !== p2Seed) {
             winnerId = p1Seed < p2Seed ? match.player1_id : match.player2_id;
+          } else if (p1SeedRow?.registered_at && p2SeedRow?.registered_at && p1SeedRow.registered_at !== p2SeedRow.registered_at) {
+            winnerId = p1SeedRow.registered_at < p2SeedRow.registered_at ? match.player1_id : match.player2_id;
           } else {
-            winnerId = match.player1_id;
+            // Fair, unbiased deterministic cryptographic coin flip
+            const p1Hash = crypto.createHash('sha256').update(`${matchId}:${match.player1_id}`).digest('hex');
+            const p2Hash = crypto.createHash('sha256').update(`${matchId}:${match.player2_id}`).digest('hex');
+            winnerId = p1Hash < p2Hash ? match.player1_id : match.player2_id;
           }
         } else {
-          winnerId = match.player1_id;
+          // Unbiased deterministic fallback for unmapped tournament matches
+          const p1Hash = crypto.createHash('sha256').update(`${matchId}:${match.player1_id}`).digest('hex');
+          const p2Hash = crypto.createHash('sha256').update(`${matchId}:${match.player2_id}`).digest('hex');
+          winnerId = p1Hash < p2Hash ? match.player1_id : match.player2_id;
         }
       }
     }
@@ -2651,7 +2669,11 @@ export function claimTournamentReward(userId, tournamentId) {
 
   db.exec('BEGIN IMMEDIATE');
   try {
-    db.prepare('UPDATE tournament_participants SET rewards_claimed = 1 WHERE tournament_id = ? AND user_id = ?').run(tournamentId, userId);
+    const updateRes = db.prepare('UPDATE tournament_participants SET rewards_claimed = 1 WHERE tournament_id = ? AND user_id = ? AND rewards_claimed = 0').run(tournamentId, userId);
+    if (updateRes.changes === 0) {
+      db.exec('ROLLBACK');
+      return { success: false, error: 'Tournament rewards have already been claimed.' };
+    }
     db.exec('COMMIT');
 
     // Award XP and title
