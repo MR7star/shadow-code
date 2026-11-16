@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import CodeEditor from '../components/editor/CodeEditor';
 import { pythonChallenges } from '../data/challenges';
@@ -524,6 +524,7 @@ function ArenaMatchWorkspace({
   onProfileUpdate,
   onCancelMatch,
 }: ArenaMatchWorkspaceProps) {
+  const navigate = useNavigate();
   const [match, setMatch] = useState<ArenaMatchDetails>(initialMatch);
   const [localSecondsRemaining, setLocalSecondsRemaining] = useState<number>(() =>
     Math.max(0, initialMatch.remainingSeconds)
@@ -854,6 +855,16 @@ function ArenaMatchWorkspace({
               {match.status.replace('_', ' ').toUpperCase()}
             </span>
             <span className="arena-hud-match-id">Match #{match.id.slice(0, 8)}</span>
+            {match.matchType === 'tournament' && (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem', color: '#fbbf24', background: 'rgba(245, 158, 11, 0.15)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(245, 158, 11, 0.35)', marginTop: '4px' }}>
+                <span>🏆</span>
+                <span>{match.tournamentContext?.tournamentTitle || 'Tournament Duel'}</span>
+                {match.tournamentContext?.round && (
+                  <span>· R{match.tournamentContext.round}</span>
+                )}
+                <span>(Elo Protected)</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -879,6 +890,16 @@ function ArenaMatchWorkspace({
           </div>
 
           <div className="arena-hud-actions">
+            {match.matchType === 'tournament' && (
+              <button
+                type="button"
+                className="arena-btn arena-btn-secondary"
+                onClick={() => navigate(match.tournamentContext?.tournamentId ? `/tournaments/${match.tournamentContext.tournamentId}` : '/tournaments')}
+                title="Return to Tournament Details"
+              >
+                ← Tournament
+              </button>
+            )}
             {match.status === 'ready' && attemptsCount === 0 && onCancelMatch && (
               <button
                 type="button"
@@ -937,7 +958,11 @@ function ArenaMatchWorkspace({
             {leftTab === 'problem' && (
               <div className="arena-problem-tab-body">
                 <div className="arena-problem-header">
-                  <span className="arena-kicker">Algorithm Duel · Rank {match.matchType.toUpperCase()}</span>
+                  <span className="arena-kicker">
+                    {match.matchType === 'tournament'
+                      ? '🏆 Tournament Duel · Single Elimination'
+                      : `Algorithm Duel · Rank ${match.matchType.toUpperCase()}`}
+                  </span>
                   <h2 className="arena-problem-title">{match.challenge.title}</h2>
                 </div>
 
@@ -1464,14 +1489,20 @@ function ArenaMatchWorkspace({
             {/* Rating Progression Card */}
             <div className="arena-result-rating-panel">
               <span className="arena-kicker">Rating Adjustment</span>
-              <div className="arena-rating-transition-row">
-                <span className="arena-res-rating before">{resultRatingBefore} SR</span>
-                <span className="arena-res-arrow">➔</span>
-                <span className="arena-res-rating after">{resultRatingAfter} SR</span>
-                <span className={`arena-res-delta ${resultRatingDelta >= 0 ? 'positive' : 'negative'}`}>
-                  ({resultRatingDelta >= 0 ? `+${resultRatingDelta}` : resultRatingDelta} SR)
-                </span>
-              </div>
+              {match.matchType === 'tournament' ? (
+                <div style={{ padding: '8px 0', color: 'var(--accent-cyan)', fontSize: '0.85rem', fontWeight: 600 }}>
+                  🏆 Tournament Match — Normal Ranked Arena Elo is strictly isolated (0 SR adjustment).
+                </div>
+              ) : (
+                <div className="arena-rating-transition-row">
+                  <span className="arena-res-rating before">{resultRatingBefore} SR</span>
+                  <span className="arena-res-arrow">➔</span>
+                  <span className="arena-res-rating after">{resultRatingAfter} SR</span>
+                  <span className={`arena-res-delta ${resultRatingDelta >= 0 ? 'positive' : 'negative'}`}>
+                    ({resultRatingDelta >= 0 ? `+${resultRatingDelta}` : resultRatingDelta} SR)
+                  </span>
+                </div>
+              )}
 
               {hasDivisionChanged && (
                 <div className="arena-res-division-alert">
@@ -1509,13 +1540,23 @@ function ArenaMatchWorkspace({
             </div>
 
             <div className="arena-result-card-actions">
-              <button
-                type="button"
-                className="arena-btn arena-btn-primary arena-btn-lg"
-                onClick={onExitMatch}
-              >
-                Return to Arena Dashboard
-              </button>
+              {match.matchType === 'tournament' ? (
+                <button
+                  type="button"
+                  className="arena-btn arena-btn-primary arena-btn-lg"
+                  onClick={() => navigate(match.tournamentContext?.tournamentId ? `/tournaments/${match.tournamentContext.tournamentId}` : '/tournaments')}
+                >
+                  🏆 Return to Tournament Bracket
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="arena-btn arena-btn-primary arena-btn-lg"
+                  onClick={onExitMatch}
+                >
+                  Return to Arena Dashboard
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -2337,6 +2378,13 @@ function MatchRow({ match, showDate }: { match: MatchHistoryEntry; showDate?: bo
           {changeDisplay}
         </span>
         <span className="arena-match-rating-after">{match.ratingAfter} SR</span>
+        <Link
+          to={`/arena/spectate/${match.id}`}
+          className="arena-match-spectate-btn"
+          title="View match analysis in Spectator mode"
+        >
+          👁️
+        </Link>
       </div>
     </div>
   );

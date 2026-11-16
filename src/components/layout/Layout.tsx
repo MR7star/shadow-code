@@ -19,6 +19,7 @@ const baseNavItems: NavItem[] = [
   { path: '/guilds', label: 'Guilds', icon: '🛡️', section: 'main' },
   { path: '/seasons', label: 'Seasons', icon: '✨', section: 'main' },
   { path: '/arena', label: 'Ranked Arena', icon: '⚔️', section: 'main' },
+  { path: '/tournaments', label: 'Tournaments', icon: '🏆', section: 'main' },
   { path: '/skills', label: 'Skill Tree', icon: '🌟', section: 'main' },
   { path: '/promotion', label: 'Promotion Trials', icon: '🏆', section: 'main' },
   { path: '/achievements', label: 'Achievements', icon: '🎖️', section: 'player' },
@@ -33,6 +34,7 @@ const pageTitles: Record<string, string> = {
   '/guilds': 'Guilds & Hunter Alliances',
   '/seasons': 'Seasonal Events',
   '/arena': 'Ranked Coding Arena',
+  '/tournaments': 'Coding Tournaments',
   '/skills': 'Skill Tree',
   '/promotion': 'Rank Promotion Trials',
   '/achievements': 'Hunter Achievements & Titles',
@@ -47,7 +49,11 @@ export default function Layout() {
   const { player, quests, isSyncing, lastLevelUp } = useProgression();
   const { user, isAuthenticated, isLoading, openAuthModal, logout } = useAuth();
   const xpPercent = Math.min(100, Math.round((player.xp / player.xpToNextLevel) * 100));
-  const pageTitle = pageTitles[location.pathname] || (location.pathname.startsWith('/arena') ? 'Ranked Coding Arena' : 'Shadow Code');
+  const pageTitle = pageTitles[location.pathname] || (
+    location.pathname.startsWith('/arena') ? 'Ranked Coding Arena' :
+    location.pathname.startsWith('/tournaments') ? 'Coding Tournaments' :
+    'Shadow Code'
+  );
 
   // Show level-up toast when lastLevelUp changes
   useEffect(() => {

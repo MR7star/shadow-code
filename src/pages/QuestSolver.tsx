@@ -180,14 +180,7 @@ export default function QuestSolver() {
         return;
       }
     } catch {
-      try {
-        const directRes = await fetch('http://localhost:3001/api/health');
-        if (directRes.ok) {
-          setRunnerStatus('online');
-          return;
-        }
-      } catch {
-      }
+      // Runner is unreachable
     }
     setRunnerStatus('offline');
   }, []);
@@ -245,21 +238,11 @@ export default function QuestSolver() {
     setEvalResult(null);
 
     try {
-      const endpoint = '/api/run';
-      let res: Response;
-      try {
-        res = await fetch(endpoint, {
-          method: 'POST',
-          headers: authHeaders(),
-          body: JSON.stringify({ challengeId: challenge.id, code }),
-        });
-      } catch {
-        res = await fetch('http://localhost:3001/api/run', {
-          method: 'POST',
-          headers: authHeaders(),
-          body: JSON.stringify({ challengeId: challenge.id, code }),
-        });
-      }
+      const res = await fetch('/api/run', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ challengeId: challenge.id, code }),
+      });
 
       const data = await res.json();
       setEvalResult(data);
@@ -308,21 +291,11 @@ export default function QuestSolver() {
     setEvalResult(null);
 
     try {
-      const endpoint = '/api/submit';
-      let res: Response;
-      try {
-        res = await fetch(endpoint, {
-          method: 'POST',
-          headers: authHeaders(),
-          body: JSON.stringify({ challengeId: challenge.id, code }),
-        });
-      } catch {
-        res = await fetch('http://localhost:3001/api/submit', {
-          method: 'POST',
-          headers: authHeaders(),
-          body: JSON.stringify({ challengeId: challenge.id, code }),
-        });
-      }
+      const res = await fetch('/api/submit', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ challengeId: challenge.id, code }),
+      });
 
       const data = await res.json();
       

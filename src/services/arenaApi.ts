@@ -138,6 +138,67 @@ export interface ArenaMatchDetails {
   deadlineAt: string;
   endTime: string | null;
   result: 'win' | 'loss' | 'draw' | null;
+  tournamentContext?: {
+    tournamentId: string;
+    tournamentTitle: string;
+    tournamentMatchId: string;
+    round: number;
+    totalRounds: number;
+    matchIndex: number;
+  } | null;
+}
+
+export interface SpectatorMatchDetails {
+  id: string;
+  seasonId: string;
+  matchType: string;
+  status: 'ready' | 'in_progress' | 'completed' | 'expired' | 'cancelled' | 'abandoned';
+  challenge: {
+    id: string;
+    title: string;
+    functionName: string;
+    lesson?: string;
+    sampleTests: any[];
+  };
+  player1: {
+    id: string;
+    name: string;
+    ratingBefore: number;
+    ratingAfter: number | null;
+    score: number;
+    passedCount: number;
+    totalTests: number;
+    timeMs: number;
+    status: string;
+    attemptsCount: number;
+  };
+  player2: {
+    id: string;
+    name: string;
+    ratingBefore: number;
+    ratingAfter: number | null;
+    score: number;
+    passedCount: number;
+    totalTests: number;
+    timeMs: number;
+    status: string;
+    attemptsCount: number;
+  };
+  winnerId: string | null;
+  winnerName: string | null;
+  durationLimitSec: number;
+  remainingSeconds: number;
+  startTime: string;
+  deadlineAt: string;
+  endTime: string | null;
+  tournamentContext?: {
+    tournamentId: string;
+    tournamentTitle: string;
+    tournamentMatchId: string;
+    round: number;
+    totalRounds: number;
+    matchIndex: number;
+  } | null;
 }
 
 export interface SampleTestCaseResult {
@@ -345,5 +406,19 @@ export async function fetchArenaMatchResult(token: string, matchId: string) {
   return apiFetch<ArenaMatchDetails>(
     `/api/arena/matches/${encodeURIComponent(matchId)}/result`,
     token
+  );
+}
+
+export async function fetchSpectatorMatch(token: string | null | undefined, matchId: string) {
+  return apiFetch<{ match: SpectatorMatchDetails }>(
+    `/api/arena/matches/${encodeURIComponent(matchId)}/spectate`,
+    token || null
+  );
+}
+
+export async function fetchTournamentLiveMatches(token: string | null | undefined, tournamentId: string) {
+  return apiFetch<{ matches: any[] }>(
+    `/api/tournaments/${encodeURIComponent(tournamentId)}/live`,
+    token || null
   );
 }

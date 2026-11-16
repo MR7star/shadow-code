@@ -1263,6 +1263,23 @@ export function getArenaMatch(matchId, userId = null) {
         : match.winner_id
           ? 'loss'
           : null,
+    tournamentContext: (() => {
+      const tm = db.prepare(`
+        SELECT tm.id as tournamentMatchId, tm.round, tm.match_index as matchIndex,
+               t.id as tournamentId, t.title as tournamentTitle, t.total_rounds as totalRounds
+        FROM tournament_matches tm
+        JOIN tournaments t ON t.id = tm.tournament_id
+        WHERE tm.arena_match_id = ?
+      `).get(match.id);
+      return tm ? {
+        tournamentId: tm.tournamentId,
+        tournamentTitle: tm.tournamentTitle,
+        tournamentMatchId: tm.tournamentMatchId,
+        round: tm.round,
+        totalRounds: tm.totalRounds,
+        matchIndex: tm.matchIndex,
+      } : null;
+    })(),
   };
 }
 

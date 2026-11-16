@@ -21,7 +21,7 @@ import type { QuestDifficulty } from '../types';
 import './QuestSolver.css';   // Reuse existing editor styles
 import './Dungeons.css';      // Dungeon-specific styles
 
-const API = 'http://localhost:3001';
+const API = '';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 

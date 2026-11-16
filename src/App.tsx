@@ -16,6 +16,8 @@ import Dungeons from './pages/Dungeons';
 import DungeonSolver from './pages/DungeonSolver';
 import Seasons from './pages/Seasons';
 import Arena from './pages/Arena';
+import Tournaments from './pages/Tournaments';
+import Spectator from './pages/Spectator';
 
 function App() {
   return (
@@ -36,6 +38,10 @@ function App() {
               <Route path="/seasons" element={<Seasons />} />
               <Route path="/arena" element={<Arena />} />
               <Route path="/arena/match/:matchId" element={<Arena />} />
+              <Route path="/arena/spectate/:matchId" element={<Spectator />} />
+              <Route path="/tournaments" element={<Tournaments />} />
+              <Route path="/tournaments/:tournamentId" element={<Tournaments />} />
+              <Route path="/tournaments/spectate/:matchId" element={<Spectator />} />
               <Route path="/profile" element={<Profile />} />
               <Route path="/leaderboard" element={<Leaderboard />} />
               <Route path="/dungeons" element={<Dungeons />} />

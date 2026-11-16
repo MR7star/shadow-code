@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import type { Dungeon, DungeonChallenge } from '../types';
 import './Dungeons.css';
 
-const API = 'http://localhost:3001';
+const API = '';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
