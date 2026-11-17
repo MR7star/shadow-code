@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { useProgression } from '../context/ProgressionContext';
 import { useAuth } from '../context/AuthContext';
 import { pythonChallenges, getChallengeById } from '../data/challenges';
@@ -119,13 +119,16 @@ const playLevelUpSound = () => {
 
 export default function QuestSolver() {
   const { questId } = useParams<{ questId: string }>();
+  const [searchParams] = useSearchParams();
   const { quests, isQuestClaimed, applyServerAward, refreshProgress, player, conceptMastery } = useProgression();
   const { token, isAuthenticated, openAuthModal } = useAuth();
   const hasPlayedLevelUpSound = useRef(false);
 
-  const challenge = useMemo(() => {
-    return getChallengeById(questId || '') as ChallengeWithLesson | undefined || pythonChallenges[0] as ChallengeWithLesson;
-  }, [questId]);
+  const resolvedChallenge = useMemo(
+    () => getChallengeById(searchParams.get('challenge') || questId || '') as ChallengeWithLesson | undefined,
+    [questId, searchParams],
+  );
+  const challenge = resolvedChallenge ?? pythonChallenges[0] as ChallengeWithLesson;
 
   const storageKey = `shadow_code_draft_${challenge.id}`;
 
@@ -408,6 +411,20 @@ export default function QuestSolver() {
       default: return 'Error';
     }
   };
+
+  if (!resolvedChallenge) {
+    return (
+      <main className="quest-solver-page">
+        <div className="solver-top-bar">
+          <Link to="/quests" className="solver-nav-back">← Back to Quests</Link>
+        </div>
+        <section className="solver-desc-pane" role="alert">
+          <h1 className="solver-title">Mission unavailable</h1>
+          <p>No challenge is registered for this mission ID.</p>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <div className="quest-solver-page">

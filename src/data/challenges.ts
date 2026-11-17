@@ -440,92 +440,83 @@ print(total)  # Output: 45`,
   {
     id: 'py-05',
     questId: 'quest-005',
-    title: 'Dungeon Key Generator: Even/Odd Logic',
-    difficulty: 'E',
-    category: 'fundamentals',
+    title: 'Object Realms',
+    difficulty: 'D',
+    category: 'data-structures',
     xpReward: 250,
-    estimatedMinutes: 25,
-    storyIntro:
-      'Ancient abyss runes require harmonized resonant keys. Only even-numbered key frequencies stabilize the dungeon seal.',
-    description:
-      'Write a function `filter_even_keys(keys)` that takes a list of integers and returns a NEW list containing only the even integers in their original order.\n\n' +
-      'An integer `n` is even if `n % 2 == 0`.',
-    prerequisiteIds: ['py-02', 'py-04'],
-    practiceChallengeId: 'py-05-practice',
-    conceptId: 'arrays',
+    estimatedMinutes: 50,
+    storyIntro: 'Forge a hunter profile from nested records and apply inventory changes without corrupting the original profile.',
+    description: 'Build a hunter profile from nested Python dictionaries, then merge inventory updates without changing the original data.',
+    prerequisiteIds: ['py-03'],
+    conceptId: 'dictionaries',
     learningObjectives: [
-      'Use the modulo operator `%` to test parity (even vs odd)',
-      'Construct a new list by appending elements',
-      'Understand list comprehensions or filter accumulation in Python',
+      'Read values from nested dictionaries',
+      'Create a new profile from existing data',
+      'Merge inventory updates with dictionary unpacking',
+      'Preserve the original profile and inventory',
     ],
     constraints: [
-      '0 <= len(keys) <= 5,000',
-      '-10,000 <= keys[i] <= 10,000',
+      'The input contains a hunter dictionary and an inventory update dictionary.',
+      'Return a new profile and merged inventory; do not mutate either input.',
     ],
     hints: [
-      'An integer `k` is even if `k % 2 == 0`.',
-      'List comprehension syntax: `[k for k in keys if k % 2 == 0]`.',
+      'Read the nested hunter name and rank from profile["hunter"].',
+      'Use dictionary unpacking to create a merged inventory copy.',
+      'Build a new outer profile too, so the original stays unchanged.',
     ],
     lesson: {
-      conceptExplanation: 'List comprehensions provide a concise way to create lists in Python. They combine iteration and filtering into a single expression. The modulo operator % returns the remainder of division - n % 2 == 0 checks if n is even.',
-      codeExample: `# Using list comprehension to filter evens
-keys = [1, 2, 3, 4, 5, 6]
-
-# Filter: keep only even numbers
-even_keys = [k for k in keys if k % 2 == 0]
-print(even_keys)  # Output: [2, 4, 6]`,
+      conceptExplanation: 'Python dictionaries store named values. Nested dictionaries can be read with chained keys, and dictionary unpacking combines mappings into a fresh dictionary. Creating new outer and nested mappings keeps the input values unchanged.',
+      codeExample: `profile = {"hunter": {"name": "Jin", "rank": "D"}, "inventory": {"keys": 1}}
+updates = {"inventory": {"keys": 2, "potions": 3}}
+merged = {**profile["inventory"], **updates["inventory"]}`,
       workedExample: {
-        input: 'keys = [1, 2, 3, 4, 5, 6]',
+        input: 'profile: Jin / D / {keys: 1}; updates: {keys: 2, potions: 3}',
         steps: [
-          'Step 1: Check each key if key % 2 == 0 (even)',
-          'Step 2: 1%2=1(odd), 2%2=0(even), 3%2=1(odd), 4%2=0(even), 5%2=1(odd), 6%2=0(even)',
-          'Step 3: Collect evens: [2, 4, 6]'
+          'Read the name and rank from the nested hunter dictionary.',
+          'Copy inventory entries and unpack the updates afterward.',
+          'Return a new profile containing the merged inventory.',
         ],
-        output: [2, 4, 6]
+        output: { name: 'Jin', rank: 'D', inventory: { keys: 2, potions: 3 } },
       },
       commonMistakes: [
-        'Forgetting the modulo operator %',
-        'Using = instead of == in the condition',
-        'Not returning a new list but modifying the original',
-        'Forgetting to handle empty lists'
+        'Mutating the original profile or nested inventory.',
+        'Unpacking dictionaries in the wrong order so old values win.',
+        'Returning the original inventory instead of a fresh mapping.',
       ],
       progressiveHints: [
-        'Use the modulo operator to check if a number is even: n % 2 == 0',
-        'Create a new list using list comprehension: [item for item in list if condition]',
-        'Iterate through keys and only include those where key % 2 equals 0',
-        'Remember that 0 is considered even (0 % 2 == 0)'
-      ]
+        'Read profile["hunter"]["name"] and profile["hunter"]["rank"] first.',
+        'Create a fresh inventory with dictionary unpacking.',
+        'Return a new mapping with name, rank, and merged inventory.',
+        'Do not assign into either input dictionary.',
+      ],
     },
-    functionName: 'filter_even_keys',
-    starterCode: `def filter_even_keys(keys: list[int]) -> list[int]:
-    """
-    Return a list of only the even integers from the input list.
-    """
-    # Write your code here
+    functionName: 'build_hunter_profile',
+    starterCode: `def build_hunter_profile(profile: dict, updates: dict) -> dict:
+    """Return name, rank, and merged inventory without mutating inputs."""
+    # updates contains an "inventory" dictionary.
     pass
 `,
     sampleTests: [
       {
-        inputDescription: 'keys = [1, 2, 3, 4, 5, 6]',
-        args: [[1, 2, 3, 4, 5, 6]],
-        expected: [2, 4, 6],
-        explanation: 'Only 2, 4, and 6 are divisible by 2.',
+        inputDescription: 'Overwrite one item and add another',
+        args: [{ hunter: { name: 'Jin', rank: 'D' }, inventory: { keys: 1 } }, { inventory: { keys: 2, potions: 3 } }],
+        expected: { name: 'Jin', rank: 'D', inventory: { keys: 2, potions: 3 } },
+        explanation: 'Updated values take precedence and new inventory entries are included.',
       },
       {
-        inputDescription: 'keys = [1, 3, 5]',
-        args: [[1, 3, 5]],
-        expected: [],
-        explanation: 'No even keys present, returns empty list [].',
+        inputDescription: 'Keep existing items when updates are empty',
+        args: [{ hunter: { name: 'Cha', rank: 'S' }, inventory: { crystals: 4 } }, { inventory: {} }],
+        expected: { name: 'Cha', rank: 'S', inventory: { crystals: 4 } },
+        explanation: 'The resulting inventory contains the existing item.',
       },
       {
-        inputDescription: 'keys = [10, 20, 30]',
-        args: [[10, 20, 30]],
-        expected: [10, 20, 30],
-        explanation: 'All keys are even.',
+        inputDescription: 'Handle empty inventory and updates',
+        args: [{ hunter: { name: 'Igris', rank: 'E' }, inventory: {} }, { inventory: {} }],
+        expected: { name: 'Igris', rank: 'E', inventory: {} },
+        explanation: 'Name and rank are returned with an empty inventory.',
       },
     ],
   },
-
   {
     id: 'py-06',
     questId: 'quest-006',

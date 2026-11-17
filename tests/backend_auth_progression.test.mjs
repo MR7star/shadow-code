@@ -122,10 +122,18 @@ async function runTests() {
   assert.equal(runRes.data.allPassed, true);
   assert.equal(runRes.data.xpReward, 0);
 
+  const objectRealmsRun = await post('/run', {
+    challengeId: 'py-05',
+    code: 'def build_hunter_profile(profile, updates):\n    inventory = {**profile["inventory"], **updates["inventory"]}\n    return {"name": profile["hunter"]["name"], "rank": profile["hunter"]["rank"], "inventory": inventory}',
+  });
+  assert.equal(objectRealmsRun.status, 200);
+  assert.equal(objectRealmsRun.data.allPassed, true, 'Object Realms sample tests should match its registered quest content');
+  assert.equal(objectRealmsRun.data.xpReward, 0, 'Running Object Realms samples must not award XP');
+
   // Verify XP on profile is still 0
   const profBefore = await get('/player/progress', token);
   assert.equal(profBefore.data.profile.xp, 0);
-  console.log('✓ Run Code did not award XP');
+  console.log('✓ Run Code did not award XP; Object Realms sample tests match its mission');
 
   // Test 8: Submit Solution requires auth and awards XP on pass
   console.log('Test 8: Submit Solution requires auth and awards XP on pass');

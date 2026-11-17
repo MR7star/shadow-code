@@ -737,7 +737,7 @@ function getAvailableMainChallenges(userId, masteredChallenges) {
       UNION SELECT 'py-02', 'Rank Identifier: Gate Thresholds', '["py-01"]', 0
       UNION SELECT 'py-03', 'Inventory Purification: Data Types', '["py-01"]', 0
       UNION SELECT 'py-04', 'Shadow Soldier Count: Loops & Iteration', '["py-02"]', 0
-      UNION SELECT 'py-05', 'Dungeon Key Generator: Even/Odd Logic', '["py-02","py-04"]', 0
+      UNION SELECT 'py-05', 'Object Realms', '["py-03"]', 0
       UNION SELECT 'py-06', 'The Double Dungeon: While Loop Countdown', '["py-04"]', 0
       UNION SELECT 'py-07', 'Potion Brewer: Dictionary & Mapping', '["py-03","py-04"]', 0
       UNION SELECT 'py-08', 'Shadow Extraction: List Manipulation & Reversal', '["py-04","py-05"]', 0

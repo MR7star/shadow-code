@@ -1,618 +1,220 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useProgression } from '../context/ProgressionContext';
+import { ArrowDownWideNarrow, ArrowRight, Check, Clock3, Code2, Filter, Search, Shield, Sparkles, Target, X } from 'lucide-react';
+import { useProgression, type DailyQuestRequestState } from '../context/ProgressionContext';
 import { useAuth } from '../context/AuthContext';
-import type { QuestDifficulty, QuestStatus } from '../types';
+import type { DailyQuest, Quest, QuestDifficulty, QuestStatus } from '../types';
+import { Button, DifficultyBadge, EmptyState, ErrorState, LoadingState, Panel, ProgressBar, StatusBadge, Toast } from '../components/ui';
 import './QuestBoard.css';
 
-const statusFilters = [
-  { key: 'all', label: 'All Quests' },
-  { key: 'available', label: 'Available' },
-  { key: 'in-progress', label: 'In Progress' },
-  { key: 'completed', label: 'Completed' },
-  { key: 'locked', label: 'Locked' },
-];
+type MissionTab = 'all' | 'main' | 'daily' | 'completed';
+type QuestSort = 'default' | 'reward' | 'difficulty' | 'time';
+type ToastState = { title: string; message: string };
 
-const difficultyOptions: { value: string; label: string }[] = [
-  { value: 'all', label: 'All Difficulties' },
-  { value: 'E', label: 'E-Rank (Beginner)' },
-  { value: 'D', label: 'D-Rank (Apprentice)' },
-  { value: 'C', label: 'C-Rank (Intermediate)' },
-  { value: 'B', label: 'B-Rank (Advanced)' },
-  { value: 'A', label: 'A-Rank (Expert)' },
-  { value: 'S', label: 'S-Rank (Master)' },
+const tabs: { id: MissionTab; label: string }[] = [
+  { id: 'all', label: 'All missions' },
+  { id: 'main', label: 'Main quests' },
+  { id: 'daily', label: 'Daily quests' },
+  { id: 'completed', label: 'Completed' },
 ];
+const difficultyOrder: Record<QuestDifficulty, number> = { E: 0, D: 1, C: 2, B: 3, A: 4, S: 5 };
 
-const topicOptions: { value: string; label: string }[] = [
-  { value: 'all', label: 'All Topics' },
-  { value: 'fundamentals', label: 'Fundamentals' },
-  { value: 'data-structures', label: 'Data Structures' },
-  { value: 'algorithms', label: 'Algorithms' },
-  { value: 'web-dev', label: 'Web Development' },
-  { value: 'databases', label: 'Databases' },
-  { value: 'system-design', label: 'System Design' },
-];
-
-function getRankColor(difficulty: QuestDifficulty): string {
-  const map: Record<QuestDifficulty, string> = {
-    E: 'var(--rank-e)',
-    D: 'var(--rank-d)',
-    C: 'var(--rank-c)',
-    B: 'var(--rank-b)',
-    A: 'var(--rank-a)',
-    S: 'var(--rank-s)',
-  };
-  return map[difficulty] || 'var(--text-muted)';
+function titleCase(value: string): string {
+  return value.replace(/-/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function getStatusStyle(status: QuestStatus) {
-  switch (status) {
-    case 'completed':
-      return { background: 'rgba(16, 185, 129, 0.12)', color: 'var(--color-success)', border: '1px solid rgba(16, 185, 129, 0.25)' };
-    case 'in-progress':
-      return { background: 'rgba(245, 158, 11, 0.12)', color: 'var(--color-warning)', border: '1px solid rgba(245, 158, 11, 0.25)' };
-    case 'available':
-      return { background: 'var(--accent-primary-subtle)', color: 'var(--accent-primary)', border: '1px solid var(--border-default)' };
-    case 'locked':
-      return { background: 'rgba(107, 101, 128, 0.12)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' };
-  }
+function statusLabel(status: QuestStatus): string {
+  return status === 'in-progress' ? 'In progress' : titleCase(status);
 }
 
-function formatCategory(cat: string): string {
-  return cat.replace(/-/g, ' ');
+function statusVariant(status: QuestStatus): 'active' | 'completed' | 'pending' | 'failed' {
+  if (status === 'available') return 'active';
+  if (status === 'completed') return 'completed';
+  if (status === 'in-progress') return 'pending';
+  return 'failed';
 }
 
-interface ToastState {
-  title: string;
-  desc: string;
-  icon: string;
+function DailyMissionContent({ state, missions, onRetry, onSignIn, errorMessage }: { state: DailyQuestRequestState['status']; missions: DailyQuest[]; onRetry: () => void; onSignIn: () => void; errorMessage?: string }) {
+  if (state === 'loading') return <Panel className="qb-daily-state"><LoadingState label="Loading daily missions" lines={3} /></Panel>;
+  if (state === 'error') return <Panel className="qb-daily-state"><ErrorState message={errorMessage || 'Daily missions could not be loaded. Retry to check the server for today’s missions.'} onRetry={onRetry} retryLabel="Retry missions" /></Panel>;
+  if (state === 'unauthenticated') return <Panel className="qb-daily-state"><EmptyState icon={<Shield size={22} />} title="Sign in to view daily missions" description="Daily missions are issued by the server for your account." action={<Button onClick={onSignIn}>Sign in</Button>} /></Panel>;
+  if (state === 'empty' || missions.length === 0) return <Panel className="qb-daily-state"><EmptyState icon={<Sparkles size={22} />} title="No daily missions available" description="There are no daily missions assigned right now." /></Panel>;
+  return <div className="qb-daily-grid">{missions.map((mission) => {
+    const label = mission.status === 'claimed' ? 'Claimed' : mission.status === 'completed' ? 'Completed' : 'Available';
+    const variant = mission.status === 'available' ? 'active' : 'completed';
+    return <Panel key={mission.id} className="qb-daily-card"><div className="qb-daily-top"><span>{titleCase(mission.mission_type.replaceAll('_', '-'))}</span><StatusBadge status={variant}>{label}</StatusBadge></div><h3>{mission.title}</h3><p>{mission.description}</p><div className="qb-daily-progress"><div><span>Mission progress</span><strong>{mission.progress} / {mission.target_progress}</strong></div><ProgressBar value={mission.progress} max={mission.target_progress} variant={mission.status === 'available' ? 'cyan' : 'success'} label={`${mission.title} progress`} /></div><footer><span><Sparkles size={15} /> +{mission.xp_reward} XP</span><small>{mission.status === 'available' ? 'Progress is tracked automatically' : label}</small></footer></Panel>;
+  })}</div>;
 }
 
 export default function QuestBoard() {
   const navigate = useNavigate();
-  const { quests, startQuest, completeQuest, isQuestClaimed } = useProgression();
-  const { isAuthenticated, openAuthModal } = useAuth();
-
-  // Filters state
-  const [searchQuery, setSearchQuery] = useState('');
-  const [activeStatus, setActiveStatus] = useState<string>('all');
-  const [selectedDifficulty, setSelectedDifficulty] = useState<string>('all');
-  const [selectedTopic, setSelectedTopic] = useState<string>('all');
-
-  // Modal detail view state
+  const { quests, player, startQuest, completeQuest, isQuestClaimed, isSyncing, dailyQuestRequest, refreshDailyQuests } = useProgression();
+  const { isAuthenticated, isLoading: authLoading, token, openAuthModal } = useAuth();
+  const [activeTab, setActiveTab] = useState<MissionTab>('all');
+  const [search, setSearch] = useState('');
+  const [difficulty, setDifficulty] = useState<QuestDifficulty | 'all'>('all');
+  const [status, setStatus] = useState<QuestStatus | 'all'>('all');
+  const [sort, setSort] = useState<QuestSort>('default');
   const [selectedQuestId, setSelectedQuestId] = useState<string | null>(null);
-
-  // Toast feedback state
   const [toast, setToast] = useState<ToastState | null>(null);
 
   useEffect(() => {
     if (!toast) return;
-    const timer = setTimeout(() => {
-      setToast(null);
-    }, 4000);
-    return () => clearTimeout(timer);
+    const timer = window.setTimeout(() => setToast(null), 4000);
+    return () => window.clearTimeout(timer);
   }, [toast]);
 
-  // Handle escape key to close modal
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+    if (!selectedQuestId) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = document.querySelector<HTMLElement>('.qb-detail');
+    const focusable = () => dialog?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])');
+    (focusable()?.[0] ?? dialog)?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
         setSelectedQuestId(null);
       }
+      if (event.key === 'Tab') {
+        const items = focusable();
+        if (!items?.length) return;
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+    document.addEventListener('keydown', onKeyDown);
+    return () => { document.removeEventListener('keydown', onKeyDown); previousFocus?.focus(); };
+  }, [selectedQuestId]);
 
-  // Exclude daily quests from the main board
-  const mainQuests = useMemo(() => quests.filter((q) => !q.isDaily), [quests]);
-
-  // Find active selected quest from live quests list
-  const selectedQuest = useMemo(() => {
-    if (!selectedQuestId) return null;
-    return quests.find((q) => q.id === selectedQuestId) || null;
-  }, [selectedQuestId, quests]);
-
-  // Filtered quests
-  const filtered = useMemo(() => {
-    return mainQuests.filter((quest) => {
-      // Status filter
-      if (activeStatus !== 'all' && quest.status !== activeStatus) {
-        return false;
-      }
-      // Difficulty filter
-      if (selectedDifficulty !== 'all' && quest.difficulty !== selectedDifficulty) {
-        return false;
-      }
-      // Topic filter
-      if (selectedTopic !== 'all' && quest.category !== selectedTopic) {
-        return false;
-      }
-      // Search filter
-      if (searchQuery.trim() !== '') {
-        const query = searchQuery.toLowerCase().trim();
-        const matchesTitle = quest.title.toLowerCase().includes(query);
-        const matchesDesc = quest.description.toLowerCase().includes(query);
-        if (!matchesTitle && !matchesDesc) {
-          return false;
-        }
-      }
+  const mainQuests = useMemo(() => quests.filter((quest) => !quest.isDaily), [quests]);
+  useEffect(() => {
+    if (!authLoading && isAuthenticated && token && dailyQuestRequest.status === 'unauthenticated') {
+      void refreshDailyQuests();
+    }
+  }, [authLoading, isAuthenticated, token, dailyQuestRequest.status, refreshDailyQuests]);
+  const dailyMissions: DailyQuest[] = dailyQuestRequest.status === 'success' || dailyQuestRequest.status === 'empty' ? dailyQuestRequest.data.quests : [];
+  const dailyCount = dailyMissions.length;
+  const counts: Record<MissionTab, number> = {
+    all: mainQuests.length + dailyCount,
+    main: mainQuests.length,
+    daily: dailyQuestRequest.status === 'success' || dailyQuestRequest.status === 'empty' ? dailyQuestRequest.data.quests.length : 0,
+    completed: mainQuests.filter((quest) => quest.status === 'completed').length + dailyMissions.filter((mission) => mission.status !== 'available').length,
+  };
+  const visibleQuests = useMemo(() => {
+    const filtered = mainQuests.filter((quest) => {
+      if (activeTab === 'daily') return false;
+      if (activeTab === 'completed' && quest.status !== 'completed') return false;
+      if (status !== 'all' && quest.status !== status) return false;
+      if (difficulty !== 'all' && quest.difficulty !== difficulty) return false;
+      const query = search.trim().toLocaleLowerCase();
+      if (query && !`${quest.title} ${quest.description}`.toLocaleLowerCase().includes(query)) return false;
       return true;
     });
-  }, [mainQuests, activeStatus, selectedDifficulty, selectedTopic, searchQuery]);
+    return filtered.sort((a, b) => {
+      if (sort === 'reward') return b.xpReward - a.xpReward;
+      if (sort === 'difficulty') return difficultyOrder[b.difficulty] - difficultyOrder[a.difficulty];
+      if (sort === 'time') return a.estimatedMinutes - b.estimatedMinutes;
+      return 0;
+    });
+  }, [mainQuests, activeTab, status, difficulty, search, sort]);
+  const selectedQuest = selectedQuestId ? quests.find((quest) => quest.id === selectedQuestId) ?? null : null;
+  const activeCount = mainQuests.filter((quest) => quest.status === 'in-progress').length;
+  const completedCount = mainQuests.filter((quest) => quest.status === 'completed').length + dailyMissions.filter((mission) => mission.status !== 'available').length;
 
-  const hasActiveFilters =
-    searchQuery.trim() !== '' ||
-    activeStatus !== 'all' ||
-    selectedDifficulty !== 'all' ||
-    selectedTopic !== 'all';
-
-  const resetFilters = () => {
-    setSearchQuery('');
-    setActiveStatus('all');
-    setSelectedDifficulty('all');
-    setSelectedTopic('all');
+  const handleStart = (quest: Quest) => {
+    if (!startQuest(quest.id)) return;
+    setToast({ title: 'Quest accepted', message: `${quest.title} is now in progress.` });
   };
 
-  const handleStartQuest = (questId: string) => {
-    const success = startQuest(questId);
-    if (success) {
-      const q = quests.find((item) => item.id === questId);
-      setToast({
-        title: '⚔️ Quest Started!',
-        desc: `"${q?.title}" is now In Progress. Complete objectives to earn XP.`,
-        icon: '⚔️',
-      });
-    }
-  };
-
-  const handleCompleteQuest = (questId: string) => {
+  const handleComplete = (quest: Quest) => {
     if (isAuthenticated) {
-      setToast({
-        title: 'Server-authoritative rewards',
-        desc: 'Sign-in progress is saved only when a passing solution is submitted in the Python IDE.',
-        icon: '🛡️',
-      });
-      navigate(`/quest/${questId}`);
+      setToast({ title: 'Complete in the Python IDE', message: 'Rewards are confirmed after a passing server-side submission.' });
+      navigate(`/quest/${quest.id}`);
       return;
     }
-
-    const result = completeQuest(questId);
-    const q = quests.find((item) => item.id === questId);
-
+    const result = completeQuest(quest.id);
     if (result.success) {
-      if (result.leveledUp) {
-        setToast({
-          title: `⚡ LEVEL UP! (Level ${result.newLevel})`,
-          desc: `Completed "${q?.title}"! Gained +${result.xpGained} XP! Rank updated!`,
-          icon: '👑',
-        });
-      } else if (result.xpGained > 0) {
-        setToast({
-          title: '✨ Quest Completed!',
-          desc: `Gained +${result.xpGained} XP from "${q?.title}"! Progress saved.`,
-          icon: '💎',
-        });
-      } else {
-        setToast({
-          title: '✓ Quest Completed',
-          desc: `"${q?.title}" marked as completed. (XP was already awarded previously)`,
-          icon: 'ℹ️',
-        });
-      }
+      setToast({ title: result.leveledUp ? `Level up — Level ${result.newLevel}` : 'Quest completed', message: result.xpGained ? `You earned ${result.xpGained} XP.` : 'This quest was already rewarded.' });
+    } else {
+      setToast({ title: 'Quest could not be completed', message: result.message });
     }
+  };
+
+  const clearFilters = () => {
+    setSearch(''); setDifficulty('all'); setStatus('all'); setSort('default');
   };
 
   return (
-    <div className="quest-board">
-      {/* Header */}
-      <div className="quest-board-header">
-        <h1 className="quest-board-title">Quest Board</h1>
-        <p className="quest-board-desc">
-          Select a quest to inspect objectives, prerequisites, and rewards. Complete quests to level up and awaken new skills.
-        </p>
-      </div>
+    <main className="quest-board">
+      <header className="qb-hero">
+        <div className="qb-hero-copy">
+          <div className="qb-eyebrow"><span /> Hunter mission registry <span className="qb-hero-code">SC / 03</span></div>
+          <h1>QUEST <span>BOARD</span></h1>
+          <p>Select a mission, study its objectives, then prove your mastery in the Python IDE.</p>
+        </div>
+        <div className="qb-rank-mark" aria-label={`${player.rank}, level ${player.level}`}>
+          <div className="qb-rank-icon"><Shield size={25} strokeWidth={1.6} /><Sparkles className="qb-rank-spark" size={12} /></div>
+          <div><span>HUNTER RANK</span><strong>{player.rank}</strong><small>LEVEL {player.level}</small></div>
+        </div>
+        <div className="qb-hero-stats" aria-label="Mission totals">
+          <div><Target size={15} /><strong>{activeCount}</strong><span>ACTIVE</span></div>
+          <div><Check size={15} /><strong>{completedCount}</strong><span>COMPLETED</span></div>
+          <div><Sparkles size={15} /><strong>{dailyCount}</strong><span>DAILY</span></div>
+        </div>
+      </header>
 
-      {/* Search and Filters Controls */}
-      <div className="quest-controls-panel">
-        {/* Search input */}
-        <div className="quest-search-wrap">
-          <span className="quest-search-icon">🔍</span>
-          <input
-            type="text"
-            className="quest-search-input"
-            placeholder="Search quests by title or keyword..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          {searchQuery && (
-            <button
-              className="quest-search-clear"
-              onClick={() => setSearchQuery('')}
-              title="Clear search"
-              aria-label="Clear search"
-            >
-              ✕
-            </button>
-          )}
+      <section className="qb-board" aria-label="Quest missions">
+        <div className="qb-section-heading">
+          <div><span className="qb-kicker">FIELD OPERATIONS</span><h2>Mission registry</h2></div>
+          <span className="qb-result-count">{visibleQuests.length} / {quests.length} missions</span>
         </div>
 
-        {/* Filter dropdowns and reset */}
-        <div className="quest-filter-row">
-          <div className="quest-filter-group">
-            <span className="quest-filter-label">Difficulty:</span>
-            <select
-              className="quest-select"
-              value={selectedDifficulty}
-              onChange={(e) => setSelectedDifficulty(e.target.value)}
-            >
-              {difficultyOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+        <nav className="qb-tabs" aria-label="Mission categories">
+          {tabs.map((tab) => <button key={tab.id} type="button" className={`qb-tab ${activeTab === tab.id ? 'is-active' : ''}`} aria-pressed={activeTab === tab.id} onClick={() => setActiveTab(tab.id)}>
+            {tab.label}<span>{counts[tab.id]}</span>
+          </button>)}
+        </nav>
+
+        <Panel className="qb-filters">
+          <label className="qb-search"><Search size={17} aria-hidden="true" /><span className="qb-sr-only">Search missions</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search mission title or objective..." /><button type="button" aria-label="Clear search" onClick={() => setSearch('')} hidden={!search}><X size={15} /></button></label>
+          <div className="qb-filter-fields">
+            <label><span><Filter size={13} /> Difficulty</span><select value={difficulty} onChange={(event) => setDifficulty(event.target.value as QuestDifficulty | 'all')}><option value="all">All ranks</option>{(['E', 'D', 'C', 'B', 'A', 'S'] as const).map((rank) => <option key={rank} value={rank}>{rank}-Rank</option>)}</select></label>
+            <label><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as QuestStatus | 'all')}><option value="all">All statuses</option><option value="available">Available</option><option value="in-progress">In progress</option><option value="completed">Completed</option><option value="locked">Locked</option></select></label>
+            <label><span><ArrowDownWideNarrow size={13} /> Sort by</span><select value={sort} onChange={(event) => setSort(event.target.value as QuestSort)}><option value="default">Recommended order</option><option value="reward">XP reward</option><option value="difficulty">Difficulty</option><option value="time">Estimated time</option></select></label>
+            {(search || difficulty !== 'all' || status !== 'all' || sort !== 'default') && <Button variant="ghost" size="sm" onClick={clearFilters}>Reset</Button>}
           </div>
+        </Panel>
 
-          <div className="quest-filter-group">
-            <span className="quest-filter-label">Topic:</span>
-            <select
-              className="quest-select"
-              value={selectedTopic}
-              onChange={(e) => setSelectedTopic(e.target.value)}
-            >
-              {topicOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+        {activeTab === 'daily' ? <DailyMissionContent state={dailyQuestRequest.status} missions={dailyMissions} onRetry={() => void refreshDailyQuests()} onSignIn={openAuthModal} errorMessage={dailyQuestRequest.status === 'error' ? dailyQuestRequest.message : undefined} /> : mainQuests.length === 0 && isSyncing ? <Panel><LoadingState label="Loading mission registry" lines={4} /></Panel> : visibleQuests.length === 0 ? <Panel className="qb-empty"><EmptyState icon={<Search size={22} />} title={mainQuests.length === 0 ? 'No missions available' : 'No missions found'} description={mainQuests.length === 0 ? 'There are no missions in the registry right now.' : 'Try a different search or clear your filters.'} action={mainQuests.length > 0 ? <Button variant="secondary" onClick={clearFilters}>Clear filters</Button> : undefined} /></Panel> : (
+          <div className="qb-grid">
+            {visibleQuests.map((quest) => <Panel key={quest.id} variant="interactive" className={`qb-card qb-card-${quest.status}`} onClick={() => setSelectedQuestId(quest.id)} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedQuestId(quest.id); } }}>
+              <div className="qb-card-top"><DifficultyBadge difficulty={quest.difficulty} /><span className="qb-topic">{titleCase(quest.category)}</span><StatusBadge status={statusVariant(quest.status)}>{statusLabel(quest.status)}</StatusBadge></div>
+              <h3>{quest.title}</h3><p className="qb-card-desc">{quest.description}</p>
+              {quest.prerequisiteIds.length > 0 && <div className={`qb-prerequisite ${quest.status === 'locked' ? 'is-locked' : ''}`}><Shield size={13} />{quest.status === 'locked' ? `${quest.prerequisiteIds.length} prerequisite${quest.prerequisiteIds.length === 1 ? '' : 's'} required` : 'Prerequisites cleared'}</div>}
+              <div className="qb-card-objectives"><span>OBJECTIVES</span>{quest.objectives.slice(0, 2).map((objective) => <div key={objective}><i />{objective}</div>)}{quest.objectives.length > 2 && <small>+{quest.objectives.length - 2} more</small>}</div>
+              <footer><div className="qb-reward"><Sparkles size={15} /><strong>+{quest.xpReward} XP</strong><span><Clock3 size={12} /> {quest.estimatedMinutes} min</span></div><span className="qb-open" aria-hidden="true"><ArrowRight size={16} /></span></footer>
+            </Panel>)}
           </div>
+        )}
+        {activeTab === 'all' && <section className="qb-daily-section"><div><span className="qb-kicker">SERVER-ISSUED</span><h2>Daily missions</h2></div><DailyMissionContent state={dailyQuestRequest.status} missions={dailyMissions} onRetry={() => void refreshDailyQuests()} onSignIn={openAuthModal} errorMessage={dailyQuestRequest.status === 'error' ? dailyQuestRequest.message : undefined} /></section>}
+        {activeTab === 'completed' && <section className="qb-daily-section"><div><span className="qb-kicker">SERVER-ISSUED</span><h2>Completed daily missions</h2></div><DailyMissionContent state={dailyQuestRequest.status === 'success' || dailyQuestRequest.status === 'empty' ? (dailyMissions.some((mission) => mission.status !== 'available') ? 'success' : 'empty') : dailyQuestRequest.status} missions={dailyMissions.filter((mission) => mission.status !== 'available')} onRetry={() => void refreshDailyQuests()} onSignIn={openAuthModal} errorMessage={dailyQuestRequest.status === 'error' ? dailyQuestRequest.message : undefined} /></section>}
+      </section>
 
-          {hasActiveFilters && (
-            <button className="quest-reset-filters-btn" onClick={resetFilters}>
-              Reset Filters ↺
-            </button>
-          )}
-        </div>
-
-        {/* Status Pills */}
-        <div className="quest-status-pills">
-          {statusFilters.map((f) => {
-            const count =
-              f.key === 'all'
-                ? mainQuests.length
-                : mainQuests.filter((q) => q.status === f.key).length;
-
-            return (
-              <button
-                key={f.key}
-                className={`quest-filter-btn ${activeStatus === f.key ? 'active' : ''}`}
-                onClick={() => setActiveStatus(f.key)}
-              >
-                {f.label} ({count})
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Quest Grid */}
-      {filtered.length === 0 ? (
-        <div className="panel" style={{ padding: '56px 20px', textAlign: 'center' }}>
-          <div style={{ fontSize: '2.5rem', marginBottom: '14px' }}>🔍</div>
-          <div style={{ color: 'var(--text-primary)', fontSize: '1.05rem', fontWeight: 600, marginBottom: '6px' }}>
-            No quests match your criteria
+      {selectedQuest && <div className="qb-detail-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedQuestId(null); }}>
+        <section className="qb-detail" role="dialog" aria-modal="true" aria-labelledby="qb-detail-title" tabIndex={-1}>
+          <header><div><span className="qb-kicker">MISSION DOSSIER / {selectedQuest.id}</span><button type="button" className="qb-close" onClick={() => setSelectedQuestId(null)} aria-label="Close mission details"><X size={18} /></button></div><div className="qb-card-top"><DifficultyBadge difficulty={selectedQuest.difficulty} /><span className="qb-topic">{titleCase(selectedQuest.category)}</span><StatusBadge status={statusVariant(selectedQuest.status)}>{statusLabel(selectedQuest.status)}</StatusBadge></div><h2 id="qb-detail-title">{selectedQuest.title}</h2></header>
+          <div className="qb-detail-content"><p className="qb-detail-description">{selectedQuest.description}</p>
+            <div className="qb-detail-stats"><div><span>REWARD</span><strong>{selectedQuest.xpReward} XP</strong></div><div><span>EST. TIME</span><strong>{selectedQuest.estimatedMinutes} min</strong></div><div><span>OBJECTIVES</span><strong>{selectedQuest.objectives.length}</strong></div></div>
+            <section><h3>Objectives</h3><ul className="qb-objective-list">{selectedQuest.objectives.map((objective) => <li key={objective}><Code2 size={15} />{objective}</li>)}</ul></section>
+            <section><h3>Prerequisites</h3>{selectedQuest.prerequisiteIds.length ? <ul className="qb-prereq-list">{selectedQuest.prerequisiteIds.map((id) => { const prerequisite = quests.find((quest) => quest.id === id); const done = prerequisite?.status === 'completed'; return <li key={id}><span>{prerequisite?.title ?? id}</span><StatusBadge status={done ? 'completed' : 'failed'}>{done ? 'Completed' : 'Incomplete'}</StatusBadge></li>; })}</ul> : <p className="qb-no-prereq">No prerequisites — this mission is open to all hunters.</p>}</section>
+            <p className="qb-server-note"><Shield size={15} /> XP rewards for signed-in hunters are confirmed after a passing server-side solution.</p>
           </div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '18px' }}>
-            Try adjusting your search query, difficulty, or topic filter.
-          </div>
-          <button className="quest-btn quest-btn-secondary" onClick={resetFilters}>
-            Clear All Filters
-          </button>
-        </div>
-      ) : (
-        <div className="quest-grid stagger-children">
-          {filtered.map((quest) => (
-            <div
-              key={quest.id}
-              className={`quest-card ${quest.status}`}
-              onClick={() => setSelectedQuestId(quest.id)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  setSelectedQuestId(quest.id);
-                }
-              }}
-            >
-              <div className="quest-card-top">
-                <div className="quest-card-badges">
-                  <div
-                    className="quest-difficulty"
-                    style={{
-                      background: `${getRankColor(quest.difficulty)}18`,
-                      color: getRankColor(quest.difficulty),
-                      border: `1px solid ${getRankColor(quest.difficulty)}44`,
-                    }}
-                  >
-                    {quest.difficulty}
-                  </div>
-                  <span className="quest-category">{formatCategory(quest.category)}</span>
-                </div>
-                <span className="quest-status-badge" style={getStatusStyle(quest.status)}>
-                  {quest.status === 'in-progress' ? 'In Progress' : quest.status}
-                </span>
-              </div>
-
-              <h3 className="quest-card-title">
-                {quest.status === 'locked' && '🔒 '}
-                {quest.title}
-              </h3>
-              <p className="quest-card-desc">{quest.description}</p>
-
-              {/* Objectives preview */}
-              <div className="quest-objectives">
-                {quest.objectives.slice(0, 3).map((obj, i) => (
-                  <div key={i} className="quest-objective">
-                    <span className="quest-objective-dot" />
-                    {obj}
-                  </div>
-                ))}
-                {quest.objectives.length > 3 && (
-                  <div className="quest-objective" style={{ color: 'var(--text-accent)' }}>
-                    +{quest.objectives.length - 3} more tasks
-                  </div>
-                )}
-              </div>
-
-              <div className="quest-card-footer">
-                <div className="quest-card-meta">
-                  <div className="quest-meta-item">
-                    ⏱️ <span className="quest-meta-value">{quest.estimatedMinutes}m</span>
-                  </div>
-                  <div className="quest-meta-item">
-                    📋 <span className="quest-meta-value">{quest.objectives.length} tasks</span>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span className="quest-xp-reward">+{quest.xpReward} XP</span>
-                  <button
-                    type="button"
-                    className="quest-btn quest-btn-secondary"
-                    style={{ padding: '4px 10px', fontSize: '0.72rem' }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/quest/${quest.id}`);
-                    }}
-                    title="Open in Python challenge solver"
-                  >
-                    🐍 Code
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Quest Detail Modal View */}
-      {selectedQuest && (
-        <div
-          className="quest-modal-backdrop"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              setSelectedQuestId(null);
-            }
-          }}
-        >
-          <div className="quest-modal" role="dialog" aria-modal="true">
-            {/* Header */}
-            <div className="quest-modal-header">
-              <button
-                className="quest-modal-close"
-                onClick={() => setSelectedQuestId(null)}
-                aria-label="Close quest details"
-              >
-                ✕
-              </button>
-
-              <div className="quest-card-badges">
-                <div
-                  className="quest-difficulty"
-                  style={{
-                    background: `${getRankColor(selectedQuest.difficulty)}22`,
-                    color: getRankColor(selectedQuest.difficulty),
-                    border: `1px solid ${getRankColor(selectedQuest.difficulty)}55`,
-                    width: '32px',
-                    height: '32px',
-                    fontSize: '0.85rem',
-                  }}
-                >
-                  {selectedQuest.difficulty}
-                </div>
-                <span className="quest-category">{formatCategory(selectedQuest.category)}</span>
-                <span className="quest-status-badge" style={getStatusStyle(selectedQuest.status)}>
-                  {selectedQuest.status === 'in-progress' ? 'In Progress' : selectedQuest.status}
-                </span>
-              </div>
-
-              <h2 className="quest-modal-title">{selectedQuest.title}</h2>
-            </div>
-
-            {/* Body */}
-            <div className="quest-modal-body">
-              <p className="quest-modal-desc">{selectedQuest.description}</p>
-
-              {/* Detail Info Grid */}
-              <div className="quest-detail-grid">
-                <div className="quest-detail-item">
-                  <span className="quest-detail-label">Difficulty</span>
-                  <span
-                    className="quest-detail-value"
-                    style={{ color: getRankColor(selectedQuest.difficulty) }}
-                  >
-                    Rank {selectedQuest.difficulty}
-                  </span>
-                </div>
-                <div className="quest-detail-item">
-                  <span className="quest-detail-label">Topic</span>
-                  <span className="quest-detail-value" style={{ textTransform: 'capitalize' }}>
-                    {formatCategory(selectedQuest.category)}
-                  </span>
-                </div>
-                <div className="quest-detail-item">
-                  <span className="quest-detail-label">Est. Time</span>
-                  <span className="quest-detail-value">{selectedQuest.estimatedMinutes} mins</span>
-                </div>
-                <div className="quest-detail-item">
-                  <span className="quest-detail-label">XP Reward</span>
-                  <span className="quest-detail-value" style={{ color: 'var(--accent-cyan)' }}>
-                    +{selectedQuest.xpReward} XP
-                  </span>
-                </div>
-              </div>
-
-              {/* Prerequisites */}
-              <div>
-                <div className="quest-modal-section-title">
-                  <span>⛓️</span> Prerequisites
-                </div>
-                {selectedQuest.prerequisiteIds.length === 0 ? (
-                  <div className="quest-prereq-item">
-                    <span className="quest-prereq-name">None — Entry Level Quest</span>
-                    <span className="quest-prereq-status done">✓ Unlocked</span>
-                  </div>
-                ) : (
-                  <div className="quest-prereq-list">
-                    {selectedQuest.prerequisiteIds.map((pid) => {
-                      const prereq = quests.find((q) => q.id === pid);
-                      const isCompleted = prereq && prereq.status === 'completed';
-                      return (
-                        <div key={pid} className="quest-prereq-item">
-                          <span className="quest-prereq-name">
-                            {prereq ? prereq.title : pid}
-                          </span>
-                          <span
-                            className={`quest-prereq-status ${isCompleted ? 'done' : 'pending'}`}
-                          >
-                            {isCompleted ? '✓ Completed' : '🔒 Incomplete'}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* Objectives */}
-              <div>
-                <div className="quest-modal-section-title">
-                  <span>📋</span> Objectives ({selectedQuest.objectives.length})
-                </div>
-                <div className="quest-modal-objectives">
-                  {selectedQuest.objectives.map((obj, i) => (
-                    <div key={i} className="quest-modal-objective">
-                      <span className="quest-modal-objective-icon">
-                        {selectedQuest.status === 'completed' ? '✅' : '🎯'}
-                      </span>
-                      <span>{obj}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Interactive Python Note */}
-              <div className="quest-disclaimer-box">
-                🐍 <strong>Interactive Python Quest:</strong> You can launch the live Python IDE to write, test, and evaluate your code with genuine server-side hidden test cases, or mark completed directly.
-              </div>
-            </div>
-
-            {/* Footer Actions */}
-            <div className="quest-modal-footer">
-              <button
-                className="quest-btn quest-btn-secondary"
-                onClick={() => setSelectedQuestId(null)}
-              >
-                Close
-              </button>
-
-              <button
-                className="quest-btn quest-btn-primary"
-                style={{
-                  background: 'linear-gradient(135deg, #06b6d4, #3b82f6)',
-                  boxShadow: '0 0 16px rgba(6, 182, 212, 0.4)',
-                }}
-                onClick={() => navigate(`/quest/${selectedQuest.id}`)}
-              >
-                🐍 Solve in Python IDE
-              </button>
-
-              {selectedQuest.status === 'locked' && (
-                <button className="quest-btn quest-btn-disabled" disabled>
-                  🔒 Prerequisites Required
-                </button>
-              )}
-
-              {selectedQuest.status === 'available' && (
-                <>
-                  <button
-                    className="quest-btn quest-btn-secondary"
-                    onClick={() => handleStartQuest(selectedQuest.id)}
-                  >
-                    Start Quest
-                  </button>
-                  <button
-                    className="quest-btn quest-btn-primary"
-                    onClick={() =>
-                      isAuthenticated
-                        ? handleCompleteQuest(selectedQuest.id)
-                        : openAuthModal()
-                    }
-                  >
-                    {isAuthenticated
-                      ? `Submit in IDE (+${selectedQuest.xpReward} XP)`
-                      : 'Sign in to save XP'}
-                  </button>
-                </>
-              )}
-
-              {selectedQuest.status === 'in-progress' && (
-                <button
-                  className="quest-btn quest-btn-primary"
-                  onClick={() => handleCompleteQuest(selectedQuest.id)}
-                >
-                  {isAuthenticated
-                    ? `Submit in IDE (+${selectedQuest.xpReward} XP)`
-                    : `Preview complete (+${selectedQuest.xpReward} XP)`}
-                </button>
-              )}
-
-              {selectedQuest.status === 'completed' && (
-                <button
-                  className="quest-btn quest-btn-success"
-                  onClick={() => handleCompleteQuest(selectedQuest.id)}
-                  title="Clicking again will not award duplicate XP"
-                >
-                  ✓ Completed {isQuestClaimed(selectedQuest.id) ? '(Rewards Claimed)' : ''}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Floating Toast notification */}
-      {toast && (
-        <div className="quest-toast" role="alert">
-          <span className="quest-toast-icon">{toast.icon}</span>
-          <div className="quest-toast-text">
-            <span className="quest-toast-title">{toast.title}</span>
-            <span className="quest-toast-desc">{toast.desc}</span>
-          </div>
-        </div>
-      )}
-    </div>
+          <footer className="qb-detail-actions"><Button variant="ghost" onClick={() => setSelectedQuestId(null)}>Close</Button>{selectedQuest.status === 'locked' ? <Button disabled icon={<Shield size={15} />}>Prerequisites required</Button> : selectedQuest.status === 'completed' ? <><Button variant="secondary" onClick={() => navigate(`/quest/${selectedQuest.id}`)} icon={<Code2 size={15} />}>Open solution</Button><StatusBadge status="completed">{isQuestClaimed(selectedQuest.id) ? 'Rewards claimed' : 'Completed'}</StatusBadge></> : <><Button variant="secondary" onClick={() => handleStart(selectedQuest)} disabled={selectedQuest.status === 'in-progress'}>{selectedQuest.status === 'in-progress' ? 'In progress' : 'Accept mission'}</Button>{selectedQuest.status === 'in-progress' && <Button onClick={() => handleComplete(selectedQuest)} icon={<Code2 size={15} />}>{isAuthenticated ? 'Submit in IDE' : 'Preview complete'}</Button>}<Button variant="ghost" onClick={() => navigate(`/quest/${selectedQuest.id}`)} icon={<Code2 size={15} />}>Open Python IDE <ArrowRight size={15} /></Button>{selectedQuest.status === 'available' && !isAuthenticated && <button className="qb-auth-link" type="button" onClick={openAuthModal}>Sign in to save rewards</button>}</>}</footer>
+        </section>
+      </div>}
+      {toast && <div className="qb-toast-wrap"><Toast variant="info" title={toast.title} message={toast.message} onClose={() => setToast(null)} /></div>}
+    </main>
   );
 }
