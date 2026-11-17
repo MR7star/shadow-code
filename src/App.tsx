@@ -18,6 +18,7 @@ import Seasons from './pages/Seasons';
 import Arena from './pages/Arena';
 import Tournaments from './pages/Tournaments';
 import Spectator from './pages/Spectator';
+import ComponentShowcase from './pages/ComponentShowcase';
 
 function App() {
   return (
@@ -26,6 +27,7 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route element={<Layout />}>
+              {import.meta.env.DEV && <Route path="/__scds" element={<ComponentShowcase />} />}
               <Route path="/" element={<Dashboard />} />
               <Route path="/quests" element={<QuestBoard />} />
               <Route path="/quest/:questId" element={<QuestSolver />} />
