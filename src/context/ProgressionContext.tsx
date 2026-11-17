@@ -5,7 +5,6 @@ import {
   currentPlayer as defaultPlayer,
   quests as defaultQuests,
   skills as defaultSkills,
-  recentActivity as defaultActivity,
 } from '../data/mockData';
 import {
   calculateXpGain,
@@ -23,6 +22,13 @@ export interface CompletionResult {
   rankChanged: boolean;
   message: string;
 }
+
+export type DailyQuestRequestState =
+  | { status: 'loading' }
+  | { status: 'success'; data: DailyQuestData }
+  | { status: 'empty'; data: DailyQuestData }
+  | { status: 'error'; message: string }
+  | { status: 'unauthenticated' };
 
 export interface PromotionAttemptResult {
   success: boolean;
@@ -55,6 +61,7 @@ export interface ProgressionContextValue {
   isSyncing: boolean;
   // Daily quests
   dailyQuestData: DailyQuestData | null;
+  dailyQuestRequest: DailyQuestRequestState;
   refreshDailyQuests: () => Promise<void>;
   claimDailyChest: () => Promise<{ success: boolean; xpAwarded: number; reason?: string }>;
   startQuest: (questId: string) => boolean;
@@ -144,7 +151,7 @@ function createPreviewData(): StoredProgressionData {
     player: defaultPlayer,
     quests: defaultQuests,
     skills: defaultSkills,
-    recentActivity: defaultActivity,
+    recentActivity: [],
     claimedRewardIds: initialClaimed,
     conceptMastery: [],
     dailyQuestData: null,
@@ -176,6 +183,9 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const { token, isAuthenticated, isLoading: authLoading } = useAuth();
   const [data, setData] = useState<StoredProgressionData>(createPreviewData);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [dailyQuestRequest, setDailyQuestRequest] = useState<DailyQuestRequestState>({ status: 'unauthenticated' });
+  const dailyRequestId = React.useRef(0);
+  const chestClaimInFlight = React.useRef(false);
   const [lastLevelUp] = useState<{ level: number; rank: string; timestamp: number } | null>(null);
 
   const refreshProgress = useCallback(async () => {
@@ -194,7 +204,10 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
       if (!profile) return;
 
       setData((prev) => {
-        const updatedPlayer = mapPlayerFromProfile(prev.player, profile);
+        const updatedPlayer = {
+          ...mapPlayerFromProfile(prev.player, profile),
+          guild: backendData.guild ?? null,
+        };
 
         const updatedQuests = prev.quests.map((q) => {
           const bq = backendData.quests?.find((item: { id: string }) => item.id === q.id);
@@ -226,28 +239,49 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
   }, [token]);
 
   const refreshDailyQuests = useCallback(async () => {
-    if (!token) return;
-
+    if (authLoading) return;
+    const requestId = ++dailyRequestId.current;
+    if (!isAuthenticated || !token) {
+      setDailyQuestRequest({ status: 'unauthenticated' });
+      return;
+    }
+    setDailyQuestRequest({ status: 'loading' });
     try {
       const res = await fetch('/api/daily', {
         headers: { Authorization: `Bearer ${token}` },
       });
-
-      if (!res.ok) return;
-
-      const dailyData = await res.json();
+      if (!res.ok) {
+        const response = await res.json().catch(() => null) as { error?: unknown } | null;
+        throw new Error(typeof response?.error === 'string' ? response.error : `Daily missions request failed (${res.status}).`);
+      }
+      const dailyData = await res.json() as DailyQuestData;
+      if (requestId !== dailyRequestId.current) return;
       setData((prev) => ({
         ...prev,
         dailyQuestData: dailyData,
       }));
+      setDailyQuestRequest(dailyData.quests.length > 0
+        ? { status: 'success', data: dailyData }
+        : { status: 'empty', data: dailyData });
     } catch (err) {
       console.warn('Could not sync daily quests with backend:', err);
+      if (requestId === dailyRequestId.current) {
+        setDailyQuestRequest({ status: 'error', message: err instanceof Error ? err.message : 'Unable to load daily missions.' });
+      }
+    } finally {
+      if (requestId === dailyRequestId.current) {
+        setDailyQuestRequest((current) => current.status === 'loading'
+          ? { status: 'error', message: 'Daily missions request ended without a response.' }
+          : current);
+      }
     }
-  }, [token]);
+  }, [authLoading, isAuthenticated, token]);
 
   const claimDailyChest = useCallback(async () => {
-    if (!token) return { success: false, xpAwarded: 0, reason: 'unauthorized' };
-
+    if (!token || chestClaimInFlight.current || (dailyQuestRequest.status !== 'success' && dailyQuestRequest.status !== 'empty') || dailyQuestRequest.data.chest.status !== 'available') {
+      return { success: false, xpAwarded: 0, reason: 'unauthorized_or_unavailable' };
+    }
+    chestClaimInFlight.current = true;
     try {
       const res = await fetch('/api/daily/claim', {
         method: 'POST',
@@ -258,6 +292,7 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
       });
 
       const result = await res.json();
+      if (!res.ok || !result.success) return { success: false, xpAwarded: 0, reason: result.reason || result.error || 'Claim failed.' };
       
       if (result.success) {
         // Update local state with new profile and daily quest data
@@ -271,7 +306,8 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
           } : null,
         }));
         
-        // Also refresh full progress to get updated streak, etc.
+        // Refresh the server-owned cache and streak after a successful claim.
+        void refreshDailyQuests();
         void refreshProgress();
       }
       
@@ -279,13 +315,17 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
     } catch (err) {
       console.warn('Could not claim daily chest:', err);
       return { success: false, xpAwarded: 0, reason: 'error' };
+    } finally {
+      chestClaimInFlight.current = false;
     }
-  }, [token, refreshProgress]);
+  }, [token, dailyQuestRequest, refreshDailyQuests, refreshProgress]);
 
   useEffect(() => {
     if (authLoading) return;
 
     if (isAuthenticated && token) {
+      // The backend has no persisted activity feed; never carry preview events into an account session.
+      setData((prev) => ({ ...prev, recentActivity: [] }));
       void refreshProgress();
       return;
     }
@@ -562,6 +602,7 @@ export const ProgressionProvider: React.FC<{ children: React.ReactNode }> = ({ c
         conceptMastery: data.conceptMastery,
         isSyncing,
         dailyQuestData: data.dailyQuestData,
+        dailyQuestRequest,
         refreshDailyQuests,
         claimDailyChest,
         startQuest,

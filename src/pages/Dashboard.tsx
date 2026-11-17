@@ -1,493 +1,334 @@
+import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useProgression } from '../context/ProgressionContext';
 import { useAuth } from '../context/AuthContext';
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import type { QuestDifficulty, Rank, AchievementsResponse } from '../types';
+import type { AchievementsResponse, ActivityEntry, PlayerStats, Rank } from '../types';
 import './Dashboard.css';
 
-const statBarColors: Record<string, string> = {
-  strength: 'var(--color-danger)',
-  intelligence: 'var(--accent-primary)',
-  agility: 'var(--color-success)',
-  vitality: 'var(--color-warning)',
-  perception: 'var(--accent-cyan)',
-  endurance: 'var(--accent-secondary)',
-};
+type IconName = 'activity' | 'award' | 'book' | 'bolt' | 'brain' | 'check' | 'chevron' | 'clock' | 'code' | 'crosshair' | 'flame' | 'gift' | 'lock' | 'swords' | 'users' | 'shield' | 'target';
 
-function getRankColor(rank: Rank | QuestDifficulty): string {
-  const map: Record<string, string> = {
-    E: 'var(--rank-e)', D: 'var(--rank-d)', C: 'var(--rank-c)',
-    B: 'var(--rank-b)', A: 'var(--rank-a)', S: 'var(--rank-s)',
-    'E-Rank': 'var(--rank-e)', 'D-Rank': 'var(--rank-d)', 'C-Rank': 'var(--rank-c)',
-    'B-Rank': 'var(--rank-b)', 'A-Rank': 'var(--rank-a)', 'S-Rank': 'var(--rank-s)',
-    'National Level': 'var(--rank-national)', 'Monarch': 'var(--rank-monarch)',
+function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
+  const common = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
+  const glyphs: Record<IconName, React.ReactNode> = {
+    activity: <><path {...common} d="M3 12h4l3-8 4 16 3-8h4" /></>,
+    award: <><circle {...common} cx="12" cy="8" r="6" /><path {...common} d="m8.2 13-1.1 8 4.9-2.7 4.9 2.7-1.1-8" /></>,
+    book: <><path {...common} d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v17H6.5A2.5 2.5 0 0 1 4 17.5z" /><path {...common} d="M4 17.5A2.5 2.5 0 0 1 6.5 15H20M8 7h8" /></>,
+    bolt: <><path {...common} d="m13 2-3 8h7l-6 12 1-9H6z" /></>,
+    brain: <><path {...common} d="M12 18V5a3 3 0 0 0-5.8-1.1A4 4 0 0 0 4 11a4 4 0 0 0 3 7h5ZM12 18V5a3 3 0 0 1 5.8-1.1A4 4 0 0 1 20 11a4 4 0 0 1-3 7h-5Z" /></>,
+    check: <><path {...common} d="m5 12 4 4L19 6" /></>,
+    chevron: <><path {...common} d="m9 18 6-6-6-6" /></>,
+    clock: <><circle {...common} cx="12" cy="12" r="9" /><path {...common} d="M12 7v5l3 2" /></>,
+    code: <><path {...common} d="m8 8-4 4 4 4M16 8l4 4-4 4m-2-10-4 12" /></>,
+    crosshair: <><circle {...common} cx="12" cy="12" r="9" /><circle {...common} cx="12" cy="12" r="3" /><path {...common} d="M12 2v2m0 16v2M2 12h2m16 0h2" /></>,
+    flame: <><path {...common} d="M12 22a7 7 0 0 0 7-7c0-4-3-6-3-10-2 1-3 3-3 5-2-2-3-5-3-8-3 3-5 7-5 12a7 7 0 0 0 7 8Z" /><path {...common} d="M10 16a2 2 0 0 0 4 0c0-1-1-2-2-3-1 1-2 2-2 3Z" /></>,
+    gift: <><path {...common} d="M20 12v10H4V12m-2-5h20v5H2zm10 0v15" /><path {...common} d="M12 7H7.5a2.5 2.5 0 1 1 2.4-3.2L12 7Zm0 0h4.5a2.5 2.5 0 1 0-2.4-3.2L12 7Z" /></>,
+    lock: <><rect {...common} x="4" y="10" width="16" height="11" rx="2" /><path {...common} d="M8 10V7a4 4 0 0 1 8 0v3" /></>,
+    swords: <><path {...common} d="m14.5 5.5 4-4 3 3-4 4M3 21l7-7m-4-4 4-4 11 11-4 4L6 10Zm0 0-4-4 3-3 4 4" /></>,
+    users: <><path {...common} d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2m16 0v-2a4 4 0 0 0-3-3.9M14 3.1a4 4 0 0 1 0 7.8" /><circle {...common} cx="10" cy="7" r="4" /></>,
+    shield: <><path {...common} d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z" /><path {...common} d="m9 12 2 2 4-4" /></>,
+    target: <><circle {...common} cx="12" cy="12" r="9" /><circle {...common} cx="12" cy="12" r="5" /><circle {...common} cx="12" cy="12" r="1" /></>,
   };
-  return map[rank] || 'var(--accent-primary)';
+  return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24">{glyphs[name]}</svg>;
 }
 
-function getMissionTypeIcon(type: string): string {
-  switch (type) {
-    case 'main_challenge': return '⚔️';
-    case 'practice_challenge': return '🎯';
-    case 'concept_mastery': return '📚';
-    default: return '📋';
-  }
+const statConfig: { key: keyof PlayerStats; label: string; icon: IconName; color: string }[] = [
+  { key: 'strength', label: 'Strength', icon: 'swords', color: 'var(--dash-red)' },
+  { key: 'intelligence', label: 'Intelligence', icon: 'brain', color: 'var(--dash-violet)' },
+  { key: 'agility', label: 'Agility', icon: 'bolt', color: 'var(--dash-cyan)' },
+  { key: 'vitality', label: 'Vitality', icon: 'flame', color: 'var(--dash-gold)' },
+  { key: 'perception', label: 'Perception', icon: 'crosshair', color: 'var(--dash-blue)' },
+  { key: 'endurance', label: 'Endurance', icon: 'shield', color: 'var(--dash-green)' },
+];
+
+function rankColor(rank: Rank): string {
+  const colors: Record<Rank, string> = {
+    'E-Rank': '#8e9aaa', 'D-Rank': '#61a8e8', 'C-Rank': '#4fc69b', 'B-Rank': '#e3b75b',
+    'A-Rank': '#f18a54', 'S-Rank': '#e36a7f', 'National Level': '#bb91ff', Monarch: '#f1c76d',
+  };
+  return colors[rank];
 }
 
-function getChestIcon(status: string): string {
-  switch (status) {
-    case 'locked': return '🔒';
-    case 'available': return '🎁';
-    case 'claimed': return '✅';
-    default: return '🔒';
-  }
+function missionIcon(type: string): IconName {
+  if (type === 'main_challenge') return 'code';
+  if (type === 'practice_challenge') return 'target';
+  if (type === 'concept_mastery') return 'book';
+  return 'activity';
 }
 
-function getMissionTypeLabel(type: string): string {
-  switch (type) {
-    case 'main_challenge': return 'Main Challenge';
-    case 'practice_challenge': return 'Practice Challenge';
-    case 'concept_mastery': return 'Concept Mastery';
-    default: return 'Mission';
-  }
+function missionLabel(type: string): string {
+  if (type === 'main_challenge') return 'Main challenge';
+  if (type === 'practice_challenge') return 'Practice';
+  if (type === 'concept_mastery') return 'Concept mastery';
+  return 'Daily mission';
 }
 
 function formatTimeToReset(): string {
   const now = new Date();
-  const tomorrow = new Date(now);
-  tomorrow.setUTCHours(24, 0, 0, 0);
-  const diff = tomorrow.getTime() - now.getTime();
-  const hours = Math.floor(diff / (1000 * 60 * 60));
-  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-  return `${hours}h ${minutes}m`;
+  const nextUtcDay = new Date(now);
+  nextUtcDay.setUTCHours(24, 0, 0, 0);
+  const minutes = Math.max(0, Math.floor((nextUtcDay.getTime() - now.getTime()) / 60000));
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-function formatTimeAgo(timestamp: string): string {
-  const diff = Date.now() - new Date(timestamp).getTime();
-  const hours = Math.floor(diff / (1000 * 60 * 60));
-  if (hours < 1) return 'Just now';
+function formatTimeAgo(timestamp: string): string | null {
+  const time = new Date(timestamp).getTime();
+  if (!Number.isFinite(time) || time > Date.now()) return null;
+  const minutes = Math.floor((Date.now() - time) / 60000);
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+function activityIcon(type: ActivityEntry['type']): IconName {
+  if (type === 'level-up') return 'bolt';
+  if (type === 'achievement') return 'award';
+  if (type === 'skill') return 'book';
+  if (type === 'streak') return 'flame';
+  return 'check';
 }
 
 export default function Dashboard() {
-  const { 
-    player, 
-    recentActivity, 
-    dailyQuestData, 
-    refreshDailyQuests,
-    claimDailyChest 
-  } = useProgression();
-  const { isAuthenticated, token } = useAuth();
+  const { player, recentActivity, dailyQuestData, dailyQuestRequest, refreshDailyQuests, claimDailyChest, isSyncing } = useProgression();
+  const { isAuthenticated, isLoading: authLoading, token } = useAuth();
   const [timeToReset, setTimeToReset] = useState(formatTimeToReset());
   const [claimingChest, setClaimingChest] = useState(false);
-  const [achievementSummary, setAchievementSummary] = useState<{ unlocked: number; total: number; titles: number }>({
-    unlocked: 0,
-    total: 20,
-    titles: 1,
-  });
+  const [claimMessage, setClaimMessage] = useState<string | null>(null);
+  const [achievementSummary, setAchievementSummary] = useState<{ unlocked: number; total: number; titles: number } | null>(null);
 
-  const xpPercent = Math.min(100, Math.round((player.xp / player.xpToNextLevel) * 100));
+  const xpPercent = player.xpToNextLevel > 0
+    ? Math.min(100, Math.max(0, Math.round((player.xp / player.xpToNextLevel) * 100)))
+    : 0;
+  const rankTint = rankColor(player.rank);
+  const initials = player.name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'H';
+  const attributes = useMemo(() => statConfig.map((stat) => ({ ...stat, value: player.stats[stat.key] })), [player.stats]);
+  const activityItems = recentActivity
+    .map((activity) => ({ activity, relativeTime: formatTimeAgo(activity.timestamp) }))
+    .filter((item): item is { activity: ActivityEntry; relativeTime: string } => item.relativeTime !== null)
+    .slice(0, 6);
+  const visibleDailyData = dailyQuestRequest.status === 'success' || dailyQuestRequest.status === 'empty'
+    ? dailyQuestRequest.data
+    : null;
+  const completedMissions = visibleDailyData?.quests.filter((quest) => quest.status !== 'available').length ?? 0;
+  const missionCount = visibleDailyData?.quests.length ?? 0;
 
   useEffect(() => {
-    if (!token || !isAuthenticated) return;
-    let isMounted = true;
+    if (!token || !isAuthenticated) {
+      setAchievementSummary(null);
+      return;
+    }
+    let active = true;
     async function loadAchievements() {
       try {
-        const res = await fetch('/api/achievements', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          const data: AchievementsResponse = await res.json();
-          if (isMounted) {
-            setAchievementSummary({
-              unlocked: data.stats?.unlockedCount || 0,
-              total: data.stats?.total || 20,
-              titles: data.titles?.length || data.stats?.titlesUnlockedCount || 1,
-            });
-          }
+        const response = await fetch('/api/achievements', { headers: { Authorization: `Bearer ${token}` } });
+        if (!response.ok) return;
+        const data: AchievementsResponse = await response.json();
+        if (active) {
+          setAchievementSummary({
+            unlocked: data.stats.unlockedCount,
+            total: data.stats.total,
+            titles: data.titles.length,
+          });
         }
-      } catch (err) {
-        console.warn('Dashboard achievements summary load failed:', err);
+      } catch (error) {
+        console.warn('Dashboard achievements summary load failed:', error);
       }
     }
     void loadAchievements();
-    return () => {
-      isMounted = false;
-    };
+    return () => { active = false; };
   }, [token, isAuthenticated]);
 
-  const statCards = [
-    {
-      icon: '⚔️',
-      value: player.questsCompleted,
-      label: 'Quests Completed',
-      color: 'var(--accent-primary)',
-      bg: 'var(--accent-primary-subtle)',
-    },
-    {
-      icon: '🌟',
-      value: `${player.skillsUnlocked}/${player.totalSkills}`,
-      label: 'Skills Unlocked',
-      color: 'var(--accent-cyan)',
-      bg: 'rgba(34, 211, 238, 0.1)',
-    },
-    {
-      icon: '🔥',
-      value: `${player.streak} days`,
-      label: 'Current Streak',
-      color: 'var(--color-warning)',
-      bg: 'var(--color-warning-glow)',
-    },
-    {
-      icon: '🎖️',
-      value: `${achievementSummary.unlocked}/${achievementSummary.total}`,
-      label: 'Achievements',
-      color: 'var(--rarity-epic)',
-      bg: 'rgba(168, 85, 247, 0.1)',
-      link: '/achievements',
-    },
-    {
-      icon: '🏆',
-      value: player.rank,
-      label: 'Current Rank',
-      color: getRankColor(player.rank),
-      bg: 'rgba(96, 165, 250, 0.1)',
-    },
-  ];
-
-  // Sync daily quest data from backend on mount and when authenticated
   useEffect(() => {
-    if (isAuthenticated) {
-      void refreshDailyQuests();
-    }
-  }, [isAuthenticated, refreshDailyQuests]);
+    if (authLoading) return;
+    void refreshDailyQuests();
+  }, [authLoading, isAuthenticated, token, refreshDailyQuests]);
 
-  // Update time to reset every minute
   useEffect(() => {
-    const interval = setInterval(() => {
-      setTimeToReset(formatTimeToReset());
-    }, 60000);
-    return () => clearInterval(interval);
+    const interval = window.setInterval(() => setTimeToReset(formatTimeToReset()), 60000);
+    return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!claimMessage) return;
+    const timeout = window.setTimeout(() => setClaimMessage(null), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [claimMessage]);
 
   const handleClaimChest = async () => {
     if (!dailyQuestData || dailyQuestData.chest.status !== 'available' || claimingChest) return;
-    
     setClaimingChest(true);
     const result = await claimDailyChest();
-    if (result.success) {
-      // Success - state will be updated via context
-    }
+    setClaimMessage(result.success ? `Reward claimed · +${result.xpAwarded.toLocaleString()} XP` : result.reason || 'The reward could not be claimed. Try again.');
     setClaimingChest(false);
   };
 
   return (
     <div className="dashboard">
-      {/* Hero Banner */}
-      <section className="hero-banner animate-fadeInUp">
-        <div className="hero-content">
-          <div className="hero-avatar">⚔️</div>
-          <div className="hero-info">
-            <div className="hero-greeting">Welcome back, Hunter</div>
-            <h2 className="hero-name">{player.name}</h2>
-            <div className="hero-title-line">
-              <Link
-                to="/achievements"
-                className="hero-title"
-                style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                title="Manage titles in Hunter Collection"
-              >
-                <span>⚡ {player.title}</span>
-                <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>✎</span>
-              </Link>
-              <span
-                className="hero-rank-badge"
-                style={{
-                  background: `${getRankColor(player.rank)}22`,
-                  color: getRankColor(player.rank),
-                  border: `1px solid ${getRankColor(player.rank)}44`,
-                }}
-              >
-                {player.rank}
-              </span>
-              <span className="hero-title" style={{ color: 'var(--text-accent)' }}>
-                Level {player.level}
-              </span>
-              {player.guild ? (
-                <Link
-                  to={`/guilds/${player.guild.id}`}
-                  className="hero-rank-badge"
-                  style={{
-                    textDecoration: 'none',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '5px',
-                    background: 'rgba(168, 85, 247, 0.15)',
-                    color: 'var(--accent-secondary, #c084fc)',
-                    border: '1px solid rgba(168, 85, 247, 0.35)',
-                  }}
-                  title={`Guild: ${player.guild.name} (${player.guild.role})`}
-                >
-                  <span>{player.guild.emblem || '🛡️'}</span>
-                  <span>[{player.guild.name}]</span>
-                  <span style={{ fontSize: '0.72rem', opacity: 0.8, textTransform: 'capitalize' }}>
-                    ({player.guild.role})
-                  </span>
-                </Link>
-              ) : (
-                <Link
-                  to="/guilds"
-                  className="hero-rank-badge"
-                  style={{
-                    textDecoration: 'none',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    background: 'rgba(255, 255, 255, 0.05)',
-                    color: 'var(--text-muted)',
-                    border: '1px solid var(--border-subtle)',
-                  }}
-                  title="Discover or join a guild"
-                >
-                  <span>🛡️</span>
-                  <span>Find Guild</span>
-                </Link>
-              )}
-            </div>
+      <header className="dash-heading">
+        <div>
+          <div className="dash-eyebrow"><span className="dash-eyebrow-line" /> HUNTER NETWORK <span className="dash-eyebrow-separator">/</span> PERSONAL STATUS</div>
+          <h1>Command Center</h1>
+          <p>Your progression, missions, and standing at a glance.</p>
+        </div>
+        <div className="dash-heading-actions">
+          <div className="dash-streak-chip"><Icon name="flame" size={16} /><span><strong>{player.streak}</strong> day streak</span></div>
+          <Link className="dash-action dash-action-secondary" to="/arena"><Icon name="swords" size={16} /> Ranked Arena</Link>
+          <Link className="dash-action dash-action-primary" to="/quests"><Icon name="code" size={16} /> Quest Board</Link>
+        </div>
+      </header>
 
-            <div className="hero-xp">
-              <div className="hero-xp-header">
-                <span className="hero-xp-label">Experience Points</span>
-                <span className="hero-xp-value">
-                  {player.xp.toLocaleString()} / {player.xpToNextLevel.toLocaleString()} XP
-                </span>
-              </div>
-              <div className="hero-xp-bar">
-                <div className="hero-xp-fill" style={{ width: `${xpPercent}%` }} />
-              </div>
+      <section className="hunter-hero" aria-label="Hunter profile">
+        <div className="hero-grid-mark" aria-hidden="true" />
+        <div className="hero-orbit hero-orbit-one" aria-hidden="true" />
+        <div className="hero-orbit hero-orbit-two" aria-hidden="true" />
+        <div className="hunter-identity">
+          <div className="hunter-avatar" aria-label={`${player.name} avatar`}>
+            {player.avatar ? <img src={player.avatar} alt="" /> : <span>{initials}</span>}
+            <span className="hunter-avatar-presence" />
+          </div>
+          <div className="hunter-copy">
+            <div className="hero-kicker"><span className="hero-kicker-dot" /> HUNTER PROFILE <span className="hero-kicker-rule" /></div>
+            <h2>{player.name}</h2>
+            <div className="hunter-tags">
+              <span className="hunter-rank" style={{ '--rank-tint': rankTint } as React.CSSProperties}>{player.rank}</span>
+              {player.title && <Link to="/achievements" className="hunter-title"><Icon name="award" size={13} /> {player.title}</Link>}
+              <span className="hunter-level">LEVEL <strong>{player.level}</strong></span>
             </div>
           </div>
         </div>
-      </section>
 
-      {/* Stats Grid */}
-      <section className="stats-grid stagger-children">
-        {statCards.map((stat, i) => {
-          const cardEl = (
-            <div
-              className="stat-card"
-              style={{ '--stat-color': stat.color } as React.CSSProperties}
-            >
-              <div className="stat-icon" style={{ background: stat.bg, color: stat.color }}>
-                {stat.icon}
-              </div>
-              <div className="stat-details">
-                <div className="stat-value">{stat.value}</div>
-                <div className="stat-label">{stat.label}</div>
-              </div>
-            </div>
-          );
-
-          if (stat.link) {
-            return (
-              <Link key={i} to={stat.link} style={{ textDecoration: 'none', color: 'inherit' }}>
-                {cardEl}
-              </Link>
-            );
-          }
-          return <div key={i}>{cardEl}</div>;
-        })}
-      </section>
-
-      {/* Daily Quests Section */}
-      <section className="panel animate-fadeInUp">
-        <div className="panel-header">
-          <div>
-            <h3 className="panel-title">Daily Quests</h3>
-            <span className="panel-subtitle">
-              {dailyQuestData ? (
-                <>
-                  <span className="streak-badge">🔥 {dailyQuestData.streak.current_streak} day streak</span>
-                  <span className="reset-timer">Resets in {timeToReset}</span>
-                </>
-              ) : (
-                'Loading...'
-              )}
-            </span>
+        <div className="hero-progression">
+          <div className="hero-progression-top">
+            <div><span className="hero-progression-label">Experience progress</span><span className="hero-progression-sub">Toward level {player.level + 1}</span></div>
+            <span className="hero-xp-count">{player.xp.toLocaleString()} <i>/</i> {player.xpToNextLevel.toLocaleString()} <small>XP</small></span>
           </div>
-          {dailyQuestData && (
-            <div className="chest-container" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <div 
-                className={`reward-chest ${dailyQuestData.chest.status}`}
-                onClick={handleClaimChest}
-                style={{ 
-                  cursor: dailyQuestData.chest.status === 'available' && !claimingChest ? 'pointer' : 'default',
-                  opacity: claimingChest ? 0.7 : 1,
-                  transition: 'all 0.2s ease',
-                }}
-                title={
-                  dailyQuestData.chest.status === 'locked' 
-                    ? 'Complete all daily missions to unlock'
-                    : dailyQuestData.chest.status === 'available' 
-                      ? `Claim ${dailyQuestData.chest.total_xp_reward} XP`
-                      : 'Already claimed'
-                }
-              >
-                <span className="chest-icon" style={{ fontSize: '1.5rem' }}>
-                  {getChestIcon(dailyQuestData.chest.status)}
-                </span>
-                <span className="chest-xp">+{dailyQuestData.chest.total_xp_reward} XP</span>
-              </div>
-              {claimingChest && <span className="claiming-spinner">⏳</span>}
-            </div>
-          )}
+          <div className="hero-xp-track" role="progressbar" aria-label="Experience toward next level" aria-valuemin={0} aria-valuemax={player.xpToNextLevel} aria-valuenow={player.xp}>
+            <span className="hero-xp-progress" style={{ width: `${xpPercent}%` }} />
+          </div>
+          <div className="hero-progression-bottom"><span>{xpPercent}% complete</span><span>{Math.max(0, player.xpToNextLevel - player.xp).toLocaleString()} XP to next level</span></div>
         </div>
-        <div className="panel-body stagger-children">
-          {dailyQuestData && dailyQuestData.quests.length > 0 ? (
-            dailyQuestData.quests.map((quest) => (
-              <div key={quest.id} className={`daily-quest ${quest.status}`}>
-                <div className="daily-quest-icon" style={{ background: `var(--${getMissionTypeColor(quest.mission_type)}-subtle)` }}>
-                  {getMissionTypeIcon(quest.mission_type)}
-                </div>
-                <div className="daily-quest-info">
-                  <div className="daily-quest-header">
-                    <span className="daily-quest-type">{getMissionTypeLabel(quest.mission_type)}</span>
-                    <span className="daily-quest-name">{quest.title}</span>
-                  </div>
-                  <div className="daily-quest-desc">{quest.description}</div>
-                  <div className="daily-quest-progress">
-                    <div className="daily-quest-progress-bar">
-                      <div 
-                        className="daily-quest-progress-fill" 
-                        style={{ width: `${Math.min(100, Math.round((quest.progress / quest.target_progress) * 100))}%` }}
-                      />
-                    </div>
-                    <span className="daily-quest-progress-text">
-                      {quest.progress}/{quest.target_progress}
-                    </span>
-                  </div>
-                </div>
-                <div className="daily-quest-reward">
-                  <span className="daily-quest-xp">+{quest.xp_reward} XP</span>
-                  <span className={`daily-quest-status-icon ${quest.status}`}>
-                    {quest.status === 'completed' ? '✓' : quest.status === 'claimed' ? '✅' : '○'}
-                  </span>
-                </div>
-              </div>
-            ))
+
+        <div className="hero-side">
+          <span className="hero-side-label">CURRENT GUILD</span>
+          {player.guild ? (
+            <Link className="hero-guild" to={`/guilds/${player.guild.id}`}>
+              <span className="hero-guild-icon">{player.guild.emblem || <Icon name="shield" size={19} />}</span>
+              <span><strong>{player.guild.name}</strong><small>{player.guild.role} · {player.guild.rank}</small></span>
+              <Icon name="chevron" size={16} />
+            </Link>
           ) : (
-            <div className="daily-quests-empty">
-              <div className="empty-icon">📜</div>
-              <p className="empty-text">
-                {isAuthenticated 
-                  ? 'No daily quests available. Check back tomorrow!' 
-                  : 'Sign in to view your daily quests and earn rewards.'}
-              </p>
-              {isAuthenticated && dailyQuestData && (
-                <button 
-                  className="refresh-daily-btn" 
-                  onClick={() => void refreshDailyQuests()}
-                  disabled={!isAuthenticated}
-                >
-                  🔄 Refresh
-                </button>
-              )}
-            </div>
+            <Link className="hero-guild hero-guild-empty" to="/guilds">
+              <span className="hero-guild-icon"><Icon name="users" size={18} /></span>
+              <span><strong>Find an alliance</strong><small>Join a Hunter guild</small></span>
+              <Icon name="chevron" size={16} />
+            </Link>
           )}
+          <div className="hero-sync-note"><span className={isSyncing ? 'sync-dot syncing' : 'sync-dot'} /> {isAuthenticated ? isSyncing ? 'Syncing hunter record' : 'Hunter record synced' : 'Preview profile'}</div>
         </div>
+      </section>
 
-        {/* Streak Info */}
-        {dailyQuestData && (
-          <div className="streak-info">
-            <div className="streak-stat">
-              <span className="streak-label">Current Streak</span>
-              <span className="streak-value">🔥 {dailyQuestData.streak.current_streak} days</span>
-            </div>
-            <div className="streak-stat">
-              <span className="streak-label">Longest Streak</span>
-              <span className="streak-value">🏆 {dailyQuestData.streak.longest_streak} days</span>
-            </div>
-            {dailyQuestData.streak.last_activity_date && (
-              <div className="streak-stat">
-                <span className="streak-label">Last Activity</span>
-                <span className="streak-value">{dailyQuestData.streak.last_activity_date}</span>
+      <section className="status-strip" aria-label="Hunter statistics">
+        <div className="status-strip-heading"><span className="status-strip-marker" /> STATUS</div>
+        <div className="status-metric"><span className="status-metric-icon violet"><Icon name="check" /></span><span><strong>{player.questsCompleted.toLocaleString()}</strong><small>Quests cleared</small></span></div>
+        <div className="status-metric"><span className="status-metric-icon cyan"><Icon name="bolt" /></span><span><strong>{player.skillsUnlocked}<i>/{player.totalSkills}</i></strong><small>Skills unlocked</small></span></div>
+        <div className="status-metric"><span className="status-metric-icon gold"><Icon name="flame" /></span><span><strong>{player.streak}<i> days</i></strong><small>Current streak</small></span></div>
+        <Link className="status-metric status-metric-link" to="/achievements"><span className="status-metric-icon purple"><Icon name="award" /></span><span><strong>{achievementSummary ? `${achievementSummary.unlocked}/${achievementSummary.total}` : '—'}</strong><small>Achievements</small></span><Icon name="chevron" size={15} /></Link>
+        <div className="status-rank"><span>HUNTER RANK</span><strong style={{ color: rankTint }}>{player.rank}</strong></div>
+      </section>
+
+      <section className="mission-section" aria-labelledby="mission-heading">
+        <div className="section-heading">
+          <div className="section-heading-copy"><div className="section-overline">TODAY'S DIRECTIVES</div><h2 id="mission-heading">Daily missions</h2><p>Complete the set to unlock your supply cache.</p></div>
+          <div className="mission-heading-meta">
+            <div className="mission-reset"><Icon name="clock" size={15} /><span>Resets in <strong>{timeToReset}</strong> <small>UTC</small></span></div>
+            <div className="mission-tally">{dailyQuestRequest.status === 'loading' || authLoading ? 'Loading missions' : dailyQuestRequest.status === 'error' ? 'Missions unavailable' : dailyQuestRequest.status === 'unauthenticated' ? 'Sign in required' : missionCount ? `${completedMissions} / ${missionCount} complete` : 'No missions today'}</div>
+          </div>
+        </div>
+        <div className="mission-board">
+          <div className="mission-list">
+            {dailyQuestRequest.status === 'loading' || authLoading ? (
+              <div className="mission-skeleton" role="status" aria-label="Loading daily missions"><span /><span /><span /></div>
+            ) : dailyQuestRequest.status === 'success' ? dailyQuestRequest.data.quests.map((quest) => {
+              const progress = quest.target_progress > 0 ? Math.min(100, Math.max(0, Math.round((quest.progress / quest.target_progress) * 100))) : 0;
+              const completed = quest.status !== 'available';
+              return (
+                <article className={`mission-row ${quest.status}`} key={quest.id}>
+                  <span className={`mission-type-icon ${quest.mission_type}`}><Icon name={missionIcon(quest.mission_type)} size={19} /></span>
+                  <div className="mission-main">
+                    <div className="mission-meta"><span>{missionLabel(quest.mission_type)}</span><span className={`mission-state ${quest.status}`}>{quest.status === 'claimed' ? 'Claimed' : quest.status === 'completed' ? 'Complete' : 'In progress'}</span></div>
+                    <h3>{quest.title}</h3>
+                    <p>{quest.description}</p>
+                    <div className="mission-progress-line"><div className="mission-progress-track"><span style={{ width: `${progress}%` }} /></div><span>{quest.progress} <i>/</i> {quest.target_progress}</span></div>
+                  </div>
+                  <div className="mission-reward"><span>REWARD</span><strong>+{quest.xp_reward.toLocaleString()} <small>XP</small></strong>{completed && <Icon name="check" size={16} />}</div>
+                </article>
+              );
+            }) : dailyQuestRequest.status === 'empty' ? (
+              <div className="mission-empty"><span className="mission-empty-icon"><Icon name="check" size={22} /></span><div><strong>No missions available today</strong><p>There are no daily objectives for this hunter right now.</p></div></div>
+            ) : dailyQuestRequest.status === 'error' ? (
+              <div className="mission-empty mission-error" role="alert"><span className="mission-empty-icon"><Icon name="activity" size={22} /></span><div><strong>Daily missions couldn’t load</strong><p>{dailyQuestRequest.message}</p></div><button type="button" className="text-action" onClick={() => void refreshDailyQuests()}>Retry</button></div>
+            ) : dailyQuestRequest.status === 'unauthenticated' ? (
+              <div className="mission-empty"><span className="mission-empty-icon"><Icon name="lock" size={22} /></span><div><strong>Sign in to receive daily missions</strong><p>Daily objectives and rewards are tied to your hunter account.</p></div></div>
+            ) : (
+              <div className="mission-empty">
+                <span className="mission-empty-icon"><Icon name="activity" size={22} /></span><div><strong>Daily missions are unavailable</strong><p>Try refreshing the mission board.</p></div><button type="button" className="text-action" onClick={() => void refreshDailyQuests()}>Retry</button>
               </div>
             )}
           </div>
-        )}
+          <aside className={`supply-cache ${visibleDailyData?.chest.status ?? dailyQuestRequest.status}`}>
+            <div className="cache-topline"><span>DAILY CACHE</span><span className="cache-state"><i /> {visibleDailyData?.chest.status ?? (dailyQuestRequest.status === 'loading' || authLoading ? 'Loading' : dailyQuestRequest.status === 'unauthenticated' ? 'Sign in' : dailyQuestRequest.status === 'error' ? 'Unavailable' : 'Unavailable')}</span></div>
+            <div className="cache-emblem"><Icon name={visibleDailyData?.chest.status === 'available' ? 'gift' : visibleDailyData?.chest.status === 'claimed' ? 'check' : 'lock'} size={27} /></div>
+            <strong className="cache-reward">{visibleDailyData ? `+${visibleDailyData.chest.total_xp_reward.toLocaleString()}` : '—'} <small>XP</small></strong>
+            <p>{visibleDailyData?.chest.status === 'available' ? 'Your reward is ready to claim.' : visibleDailyData?.chest.status === 'claimed' ? 'Today’s supply has been collected.' : dailyQuestRequest.status === 'error' ? 'Retry the mission request to check cache eligibility.' : 'Clear every mission to unlock the reward.'}</p>
+            <button type="button" className="cache-claim" disabled={visibleDailyData?.chest.status !== 'available' || claimingChest} onClick={() => void handleClaimChest()}>
+              {claimingChest ? 'Claiming…' : visibleDailyData?.chest.status === 'claimed' ? 'Collected' : 'Claim reward'}
+              {!claimingChest && <Icon name={visibleDailyData?.chest.status === 'claimed' ? 'check' : 'chevron'} size={16} />}
+            </button>
+            {claimMessage && <span className="cache-feedback" role="status">{claimMessage}</span>}
+            {visibleDailyData && <span className="cache-streak"><Icon name="flame" size={14} /> Longest streak <strong>{visibleDailyData.streak.longest_streak} days</strong></span>}
+          </aside>
+        </div>
       </section>
 
-      {/* Two-Column: Activity Feed + Additional Info */}
-      <section className="dashboard-columns">
-        {/* Activity Feed */}
-        <div className="panel animate-fadeInUp">
-          <div className="panel-header">
-            <div>
-              <h3 className="panel-title">Recent Activity</h3>
-              <span className="panel-subtitle">Your journey so far</span>
-            </div>
-          </div>
-          <div className="panel-body">
-            {recentActivity.map((activity) => (
-              <div key={activity.id} className="activity-item">
-                <div className="activity-icon">{activity.icon}</div>
-                <div className="activity-text">
-                  <div className="activity-message">{activity.message}</div>
-                  <div className="activity-time">{formatTimeAgo(activity.timestamp)}</div>
-                </div>
+      <section className="dashboard-lower-grid">
+        <div className="dash-panel activity-panel">
+          <div className="dash-panel-heading"><div><div className="section-overline">FIELD LOG</div><h2>Recent activity</h2></div><span className="panel-live-tag"><i /> {isAuthenticated ? 'THIS SESSION' : 'PREVIEW'}</span></div>
+          {activityItems.length ? (
+            <ol className="activity-timeline">
+              {activityItems.map(({ activity, relativeTime }) => (
+                <li className={`timeline-item ${activity.type}`} key={activity.id}>
+                  <span className="timeline-icon"><Icon name={activityIcon(activity.type)} size={16} /></span>
+                  <span className="timeline-connector" />
+                  <div className="timeline-copy"><strong>{activity.message}</strong><span><Icon name="clock" size={12} /> {relativeTime}</span></div>
+                  <span className="timeline-status"><Icon name="check" size={14} /></span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <div className="activity-empty"><span className="activity-empty-icon"><Icon name="activity" size={23} /></span><strong>No session activity yet</strong><p>{isAuthenticated ? 'Completed challenges and level-ups from this session will appear here.' : 'Complete a preview quest to begin your field log.'}</p><Link to="/quests" className="text-action">Browse quests <Icon name="chevron" size={14} /></Link></div>
+          )}
+        </div>
+
+        <div className="dash-panel attributes-panel">
+          <div className="dash-panel-heading"><div><div className="section-overline">HUNTER PROFILE</div><h2>Attributes</h2></div><span className="attribute-scale">0 — 100</span></div>
+          <div className="attribute-list">
+            {attributes.map((attribute) => (
+              <div className="attribute-row" key={attribute.key} style={{ '--attribute-color': attribute.color } as React.CSSProperties}>
+                <div className="attribute-label"><span><Icon name={attribute.icon} size={15} />{attribute.label}</span><strong>{attribute.value}</strong></div>
+                <div className="attribute-track" role="progressbar" aria-label={attribute.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={attribute.value}><span style={{ width: `${Math.min(100, Math.max(0, attribute.value))}%` }} /></div>
               </div>
             ))}
-            {recentActivity.length === 0 && (
-              <div className="activity-empty">
-                <span>📭</span>
-                <p>No recent activity. Complete a quest to start your journey!</p>
-              </div>
-            )}
           </div>
-        </div>
-
-        {/* Player Stats */}
-        <div className="panel animate-fadeInUp" style={{ animationDelay: '0.1s' }}>
-          <div className="panel-header">
-            <div>
-              <h3 className="panel-title">Hunter Stats</h3>
-              <span className="panel-subtitle">Your combat attributes</span>
-            </div>
-          </div>
-          <div className="panel-body">
-            <div className="stats-panel-content">
-              {Object.entries(player.stats).map(([key, value]) => (
-                <div key={key} className="player-stat-bar">
-                  <div className="player-stat-header">
-                    <span className="player-stat-name">{key}</span>
-                    <span className="player-stat-value">{value}/100</span>
-                  </div>
-                  <div className="player-stat-track">
-                    <div
-                      className="player-stat-fill"
-                      style={{
-                        width: `${value}%`,
-                        background: statBarColors[key] || 'var(--accent-primary)',
-                      }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          <Link className="attributes-footer" to="/profile">View hunter profile <Icon name="chevron" size={15} /></Link>
         </div>
       </section>
+
+      <nav className="dash-quick-nav" aria-label="More hunter actions">
+        <Link to="/dungeons"><Icon name="shield" size={16} /><span>Enter a dungeon</span><Icon name="chevron" size={14} /></Link>
+        <Link to="/guilds"><Icon name="users" size={16} /><span>Hunter guilds</span><Icon name="chevron" size={14} /></Link>
+        <Link to="/achievements"><Icon name="award" size={16} /><span>Achievement archive</span><Icon name="chevron" size={14} /></Link>
+      </nav>
     </div>
   );
-}
-
-function getMissionTypeColor(type: string): string {
-  switch (type) {
-    case 'main_challenge': return 'accent-primary';
-    case 'practice_challenge': return 'accent-secondary';
-    case 'concept_mastery': return 'accent-cyan';
-    default: return 'accent-primary';
-  }
 }
