@@ -21,11 +21,11 @@
 
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import { startTestServer as startBackendTestServer, stopTestServer } from './helpers/testServer.mjs';
 
 const TEST_DB_PATH = './data/test_backend_achievements.db';
-const BASE_URL = 'http://localhost:3001/api';
+let BASE_URL;
 
 async function post(path, body, token) {
   const headers = { 'Content-Type': 'application/json' };
@@ -61,47 +61,8 @@ function cleanupTestDbFiles() {
 
 // Start test server with the dedicated test database
 function startTestServer() {
-  return new Promise((resolve, reject) => {
-    cleanupTestDbFiles();
-
-    const server = spawn('node', ['server/runner.mjs'], {
-      env: {
-        ...process.env,
-        DATABASE_PATH: TEST_DB_PATH,
-        PORT: '3001',
-        HOST: '0.0.0.0',
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let started = false;
-    server.stdout.on('data', (data) => {
-      const output = data.toString();
-      if (output.includes('Backend listening') && !started) {
-        started = true;
-        setTimeout(() => resolve(server), 400);
-      }
-    });
-
-    server.stderr.on('data', (data) => {
-      console.error('[SERVER ERR]', data.toString().trim());
-    });
-
-    server.on('error', (err) => {
-      if (!started) reject(err);
-    });
-
-    server.on('close', (code) => {
-      if (!started) reject(new Error(`Server exited with code ${code}`));
-    });
-
-    setTimeout(() => {
-      if (!started) {
-        server.kill();
-        reject(new Error('Server startup timeout'));
-      }
-    }, 10000);
-  });
+  cleanupTestDbFiles();
+  return startBackendTestServer({ databasePath: TEST_DB_PATH, logPrefix: '[SERVER]' });
 }
 
 function getCode(challengeId) {
@@ -130,6 +91,7 @@ function getCode(challengeId) {
 async function runTests() {
   console.log('--- Starting Backend Achievements, Titles & Hunter Collection Test Suite ---\n');
   const server = await startTestServer();
+  BASE_URL = server.baseUrl;
   console.log('✓ Test server started with dedicated SQLite database\n');
 
   try {
@@ -501,8 +463,7 @@ async function runTests() {
     console.log('=================================================================\n');
   } finally {
     if (server) {
-      server.kill();
-      await new Promise((r) => setTimeout(r, 300));
+      await stopTestServer(server.process);
     }
     cleanupTestDbFiles();
   }

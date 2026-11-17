@@ -22,11 +22,11 @@
 
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import { startTestServer as startBackendTestServer, stopTestServer } from './helpers/testServer.mjs';
 
 const TEST_DB_PATH = './data/test_backend_guilds.db';
-const BASE_URL = 'http://localhost:3001/api';
+let BASE_URL;
 
 async function post(path, body, token) {
   const headers = { 'Content-Type': 'application/json' };
@@ -60,47 +60,8 @@ function cleanupTestDbFiles() {
 }
 
 function startTestServer() {
-  return new Promise((resolve, reject) => {
-    cleanupTestDbFiles();
-
-    const server = spawn('node', ['server/runner.mjs'], {
-      env: {
-        ...process.env,
-        DATABASE_PATH: TEST_DB_PATH,
-        PORT: '3001',
-        HOST: '0.0.0.0',
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let started = false;
-    server.stdout.on('data', (data) => {
-      const output = data.toString();
-      if (output.includes('Backend listening') && !started) {
-        started = true;
-        setTimeout(() => resolve(server), 400);
-      }
-    });
-
-    server.stderr.on('data', (data) => {
-      console.error('[SERVER ERR]', data.toString().trim());
-    });
-
-    server.on('error', (err) => {
-      if (!started) reject(err);
-    });
-
-    server.on('close', (code) => {
-      if (!started) reject(new Error(`Server exited with code ${code}`));
-    });
-
-    setTimeout(() => {
-      if (!started) {
-        server.kill();
-        reject(new Error('Server start timed out after 8000ms.'));
-      }
-    }, 8000);
-  });
+  cleanupTestDbFiles();
+  return startBackendTestServer({ databasePath: TEST_DB_PATH, logPrefix: '[SERVER]' });
 }
 
 async function registerHunter(username, email, password = 'Password123!') {
@@ -119,7 +80,8 @@ async function runTests() {
   try {
     console.log('[Setup] Launching isolated test server with dedicated database...');
     serverProcess = await startTestServer();
-    console.log('[Setup] Test server running on http://localhost:3001.');
+    BASE_URL = serverProcess.baseUrl;
+    console.log(`[Setup] Test server running on ${BASE_URL}.`);
 
     // ─── Test 1: Unauthenticated rejection across all guild routes ───────
     console.log('\n[Test 1] Testing unauthenticated access enforcement (401)...');
@@ -546,8 +508,7 @@ async function runTests() {
   } finally {
     if (serverProcess) {
       console.log('[Teardown] Shutting down test server...');
-      serverProcess.kill('SIGTERM');
-      await new Promise((r) => setTimeout(r, 600));
+      await stopTestServer(serverProcess.process);
       cleanupTestDbFiles();
       console.log('[Teardown] Temporary SQLite test files cleaned up successfully.');
     }

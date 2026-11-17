@@ -7,11 +7,11 @@
 
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import { startTestServer as startBackendTestServer, stopTestServer } from './helpers/testServer.mjs';
 
 const TEST_DB_PATH = './data/test_backend_seasons.db';
-const BASE_URL = 'http://localhost:3001/api';
+let BASE_URL;
 
 async function post(path, body, token) {
   const headers = { 'Content-Type': 'application/json' };
@@ -37,39 +37,8 @@ function cleanupTestDbFiles() {
 }
 
 function startTestServer() {
-  return new Promise((resolve, reject) => {
-    cleanupTestDbFiles();
-    const process = spawn('node', ['server/runner.mjs'], {
-      env: {
-        ...globalThis.process.env,
-        DATABASE_PATH: TEST_DB_PATH,
-        PORT: '3001',
-        HOST: '127.0.0.1',
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let started = false;
-    process.stdout.on('data', (data) => {
-      if (!started && data.toString().includes('Backend listening')) {
-        started = true;
-        setTimeout(() => resolve(process), 300);
-      }
-    });
-    process.stderr.on('data', (data) => console.error('[SERVER ERR]', data.toString().trim()));
-    process.on('error', (error) => {
-      if (!started) reject(error);
-    });
-    process.on('close', (code) => {
-      if (!started) reject(new Error(`Server exited with code ${code}`));
-    });
-    setTimeout(() => {
-      if (!started) {
-        process.kill();
-        reject(new Error('Server startup timed out.'));
-      }
-    }, 10000);
-  });
+  cleanupTestDbFiles();
+  return startBackendTestServer({ databasePath: TEST_DB_PATH, logPrefix: '[SERVER]' });
 }
 
 async function registerHunter(username) {
@@ -99,6 +68,7 @@ async function runTests() {
   try {
     console.log('[Setup] Starting isolated season test server…');
     server = await startTestServer();
+    BASE_URL = server.baseUrl;
     testDb = new DatabaseSync(TEST_DB_PATH);
 
     const seasons = await get('/seasons');
@@ -212,8 +182,7 @@ async function runTests() {
   } finally {
     testDb?.close();
     if (server) {
-      server.kill();
-      await new Promise((resolve) => server.once('close', resolve));
+      await stopTestServer(server.process);
     }
     cleanupTestDbFiles();
   }

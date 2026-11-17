@@ -16,10 +16,10 @@
 
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { spawn } from 'node:child_process';
+import { startTestServer as startBackendTestServer, stopTestServer } from './helpers/testServer.mjs';
 
 const TEST_DB_PATH = './data/test_promotion_trials.db';
-const BASE_URL = 'http://localhost:3001/api';
+let BASE_URL;
 
 async function post(path, body, token) {
   const headers = { 'Content-Type': 'application/json' };
@@ -43,41 +43,7 @@ async function get(path, token) {
 
 // Start test server with a dedicated test database
 function startTestServer() {
-  return new Promise((resolve, reject) => {
-    const server = spawn('node', ['server/runner.mjs'], {
-      env: { ...process.env, DATABASE_PATH: TEST_DB_PATH, PORT: '3001', HOST: '0.0.0.0' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let started = false;
-    server.stdout.on('data', (data) => {
-      const output = data.toString();
-      console.log('[SERVER]', output.trim());
-      if (output.includes('Backend listening') && !started) {
-        started = true;
-        setTimeout(() => resolve(server), 500);
-      }
-    });
-
-    server.stderr.on('data', (data) => {
-      console.error('[SERVER ERR]', data.toString().trim());
-    });
-
-    server.on('error', (err) => {
-      if (!started) reject(err);
-    });
-
-    server.on('close', (code) => {
-      if (!started) reject(new Error(`Server exited with code ${code}`));
-    });
-
-    setTimeout(() => {
-      if (!started) {
-        server.kill();
-        reject(new Error('Server startup timeout'));
-      }
-    }, 10000);
-  });
+  return startBackendTestServer({ databasePath: TEST_DB_PATH, logPrefix: '[SERVER]' });
 }
 
 // Solution codes for challenges used in promotion trials
@@ -124,6 +90,7 @@ async function runTests() {
   console.log('--- Starting Backend Promotion Trials Test Suite ---\n');
 
   const server = await startTestServer();
+  BASE_URL = server.baseUrl;
   console.log('Test server started\n');
 
   try {
@@ -380,12 +347,12 @@ async function runTests() {
     console.log('ALL PROMOTION TRIALS TESTS PASSED!');
     console.log('========================================\n');
   } finally {
-    server.kill();
+    await stopTestServer(server.process);
   }
 }
 
 runTests().catch((err) => {
-  console.error('\n[FAIL] Test failed:', err.message || err);
+  console.error('\n[FAIL] Test failed:', err);
   process.exit(1);
 
 });

@@ -99,7 +99,7 @@ initGuildTables();
 // Initialize seasons, arena & tournament tables (idempotent)
 initSeasonTables();
 
-const PORT = process.env.PORT || 3001;
+const PORT = Number(process.env.PORT || 3001);
 const HOST = process.env.HOST || '0.0.0.0';
 const TIMEOUT_MS = parseInt(process.env.RUNNER_TIMEOUT_MS || '3000', 10);
 const MAX_OUTPUT_LENGTH = 10000;
@@ -1980,5 +1980,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`[Shadow Code] Backend listening on http://${HOST}:${PORT} (loopback by default; not a production sandbox)`);
+  const address = server.address();
+  const boundPort = address && typeof address === 'object' ? address.port : PORT;
+  console.log(`[Shadow Code] Backend listening on http://${HOST}:${boundPort} (loopback by default; not a production sandbox)`);
 });

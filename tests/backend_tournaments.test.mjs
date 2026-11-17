@@ -15,13 +15,13 @@
 
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { startTestServer as startBackendTestServer, stopTestServer } from './helpers/testServer.mjs';
 
 const TEST_DB_PATH = path.join(os.tmpdir(), `test_backend_tournaments_${process.pid}.db`);
-const BASE_URL = 'http://localhost:3001/api';
+let BASE_URL;
 
 async function post(urlPath, body = {}, token) {
   const headers = { 'Content-Type': 'application/json' };
@@ -52,38 +52,8 @@ function cleanupTestDbFiles(ignoreBusy = false) {
 }
 
 function startTestServer() {
-  return new Promise((resolve, reject) => {
-    cleanupTestDbFiles();
-    const server = spawn('node', ['server/runner.mjs'], {
-      env: {
-        ...process.env,
-        DATABASE_PATH: TEST_DB_PATH,
-        PORT: '3001',
-        HOST: '127.0.0.1',
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let started = false;
-    server.stdout.on('data', (data) => {
-      if (!started && data.toString().includes('Backend listening')) {
-        started = true;
-        setTimeout(() => resolve(server), 250);
-      }
-    });
-    server.stderr.on('data', (data) => console.error('[SERVER ERR]', data.toString().trim()));
-    server.on('error', (error) => {
-      if (!started) reject(error);
-    });
-    server.on('close', (code) => {
-      if (!started) reject(new Error(`Server exited before startup with code ${code}.`));
-    });
-    setTimeout(() => {
-      if (!started) {
-        server.kill();
-        reject(new Error('Tournament test server startup timed out.'));
-      }
-    }, 10000);
-  });
+  cleanupTestDbFiles();
+  return startBackendTestServer({ databasePath: TEST_DB_PATH, logPrefix: '[SERVER]' });
 }
 
 let hunterCounter = 1;
@@ -126,6 +96,7 @@ async function main() {
 
   console.log('[Setup] Starting isolated tournament test backend…');
   const server = await startTestServer();
+  BASE_URL = server.baseUrl;
 
   try {
     // ─── Step 1: Users & Tournament Creation ────────────────────────────────
@@ -518,7 +489,7 @@ async function main() {
     console.log('ALL CODING TOURNAMENTS BACKEND TESTS PASSED!');
     console.log('=============================================\n');
   } finally {
-    server.kill();
+    await stopTestServer(server.process);
     cleanupTestDbFiles(true);
   }
 }
