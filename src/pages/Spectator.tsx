@@ -247,16 +247,16 @@ export default function Spectator() {
               Sample Verification Cases
             </div>
             <div className="spectator-tests-list">
-              {Array.isArray(match.challenge.sampleTests) && match.challenge.sampleTests.map((t: any, idx: number) => (
+              {match.challenge.sampleTests.map((t, idx) => (
                 <div key={idx} className="spectator-test-card">
                   <div className="spectator-test-header">Case #{idx + 1}</div>
                   <div className="spectator-test-row">
                     <span className="spectator-test-label">Input:</span>
-                    <span className="spectator-test-val">{typeof t.input === 'object' ? JSON.stringify(t.input) : String(t.input)}</span>
+                    <span className="spectator-test-val">{typeof t.input === 'object' ? JSON.stringify(t.input) : String(t.input ?? '')}</span>
                   </div>
                   <div className="spectator-test-row">
                     <span className="spectator-test-label">Expected:</span>
-                    <span className="spectator-test-val">{typeof t.expected === 'object' ? JSON.stringify(t.expected) : String(t.expected)}</span>
+                    <span className="spectator-test-val">{typeof t.expected === 'object' ? JSON.stringify(t.expected) : String(t.expected ?? '')}</span>
                   </div>
                 </div>
               ))}

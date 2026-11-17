@@ -17,6 +17,7 @@ import {
   type TournamentDetails,
   type TournamentStatus,
   type BracketRound,
+  type TournamentLiveMatch,
 } from '../services/tournamentApi';
 import './Tournaments.css';
 
@@ -31,7 +32,7 @@ export default function Tournaments() {
   // ─── Component State ─────────────────────────────────────────────
   const [tournaments, setTournaments] = useState<TournamentListItem[]>([]);
   const [selectedTournament, setSelectedTournament] = useState<TournamentDetails | null>(null);
-  const [liveMatches, setLiveMatches] = useState<any[]>([]);
+  const [liveMatches, setLiveMatches] = useState<TournamentLiveMatch[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeFilter, setActiveFilter] = useState<'all' | TournamentStatus>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -71,8 +72,8 @@ export default function Tournaments() {
     const res = await fetchTournamentDetails(id, token);
     if (res.ok && res.data) {
       setSelectedTournament(res.data);
-      // Auto-select bracket if ongoing or completed, else roster
-      if (['ongoing', 'completed'].includes(res.data.status)) {
+      // Auto-select bracket once the tournament starts, else roster
+      if (['in_progress', 'completed'].includes(res.data.status)) {
         setDetailTab('bracket');
       } else {
         setDetailTab('roster');
@@ -102,9 +103,9 @@ export default function Tournaments() {
     }
   }, [routeTournamentId, loadDetails, loadLiveMatches, loadTournaments]);
 
-  // Periodic polling for live matches if tournament is ongoing
+  // Periodic polling for live matches while the tournament is active
   useEffect(() => {
-    if (!routeTournamentId || selectedTournament?.status !== 'ongoing') return;
+    if (!routeTournamentId || selectedTournament?.status !== 'in_progress') return;
     const interval = setInterval(() => {
       loadLiveMatches(routeTournamentId);
     }, 4000);
@@ -268,16 +269,9 @@ export default function Tournaments() {
     });
   }, [tournaments, activeFilter, searchQuery]);
 
-  // Extract bracket rounds defensively
+  // The details endpoint returns grouped rounds under `bracket`.
   const bracketRounds: BracketRound[] = useMemo(() => {
-    if (!selectedTournament) return [];
-    if (Array.isArray(selectedTournament.bracket) && selectedTournament.bracket.length > 0) {
-      return selectedTournament.bracket;
-    }
-    if (Array.isArray((selectedTournament as any).rounds)) {
-      return (selectedTournament as any).rounds;
-    }
-    return [];
+    return selectedTournament?.bracket ?? [];
   }, [selectedTournament]);
 
   // ─── Render: Details View ─────────────────────────────────────────
@@ -285,7 +279,7 @@ export default function Tournaments() {
     const isOwner = selectedTournament.userContext.isCreator;
     const isRegistered = selectedTournament.userContext.isRegistered;
     const canStart = isOwner && selectedTournament.status === 'registration' && selectedTournament.currentParticipants >= 2;
-    const canCancel = isOwner && ['registration', 'ongoing'].includes(selectedTournament.status);
+    const canCancel = isOwner && ['registration', 'in_progress'].includes(selectedTournament.status);
     const canWithdraw = isRegistered && selectedTournament.status === 'registration';
 
     return (
@@ -311,7 +305,7 @@ export default function Tournaments() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <span className={`status-badge ${selectedTournament.status}`}>
                 <span className="dot" />
-                {selectedTournament.status === 'registration' ? 'Registration Open' : selectedTournament.status === 'ongoing' ? 'In Progress' : selectedTournament.status}
+                {selectedTournament.status === 'registration' ? 'Registration Open' : selectedTournament.status === 'in_progress' ? 'In Progress' : selectedTournament.status}
               </span>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                 Format: Single Elimination ({selectedTournament.maxParticipants} Hunters)
@@ -371,7 +365,7 @@ export default function Tournaments() {
                   ? selectedTournament.currentParticipants >= selectedTournament.maxParticipants
                     ? 'Tournament capacity reached.'
                     : `${selectedTournament.maxParticipants - selectedTournament.currentParticipants} slots remaining.`
-                  : selectedTournament.status === 'ongoing'
+                  : selectedTournament.status === 'in_progress'
                   ? 'Matches are currently underway.'
                   : `Tournament concluded with champion ${selectedTournament.winnerName || 'Winner'}.`}
               </div>
@@ -470,9 +464,9 @@ export default function Tournaments() {
                             </div>
 
                             {/* Combatant 1 Slot */}
-                            <div className={`bracket-match-slot ${matchNode.winnerId === matchNode.p1Id && isCompleted ? 'winner' : ''} ${matchNode.p1Id === user?.id ? 'you' : ''}`}>
+                            <div className={`bracket-match-slot ${matchNode.winnerId === matchNode.p1Id && (isCompleted || isBye) ? 'winner' : ''} ${matchNode.p1Id === user?.id ? 'you' : ''}`}>
                               <div className="bracket-slot-name">
-                                <span>{matchNode.winnerId === matchNode.p1Id && isCompleted ? '👑' : '⚔️'}</span>
+                                <span>{matchNode.winnerId === matchNode.p1Id && (isCompleted || isBye) ? '👑' : '⚔️'}</span>
                                 <span>{matchNode.p1Name || (matchNode.round === 1 ? 'Empty Slot' : 'TBD')}</span>
                               </div>
                               {matchNode.p1Id === user?.id && (
@@ -481,9 +475,9 @@ export default function Tournaments() {
                             </div>
 
                             {/* Combatant 2 Slot */}
-                            <div className={`bracket-match-slot ${matchNode.winnerId === matchNode.p2Id && isCompleted ? 'winner' : ''} ${matchNode.p2Id === user?.id ? 'you' : ''}`}>
+                            <div className={`bracket-match-slot ${matchNode.winnerId === matchNode.p2Id && (isCompleted || isBye) ? 'winner' : ''} ${matchNode.p2Id === user?.id ? 'you' : ''}`}>
                               <div className="bracket-slot-name">
-                                <span>{matchNode.winnerId === matchNode.p2Id && isCompleted ? '👑' : '🛡️'}</span>
+                                <span>{matchNode.winnerId === matchNode.p2Id && (isCompleted || isBye) ? '👑' : '🛡️'}</span>
                                 <span>{matchNode.p2Name || (isBye ? 'BYE (Auto Advance)' : matchNode.round === 1 ? 'Empty Slot' : 'TBD')}</span>
                               </div>
                               {matchNode.p2Id === user?.id && (
@@ -786,8 +780,8 @@ export default function Tournaments() {
             Registration Open
           </button>
           <button
-            className={`tournaments-tab-btn ${activeFilter === 'ongoing' ? 'active' : ''}`}
-            onClick={() => setActiveFilter('ongoing')}
+            className={`tournaments-tab-btn ${activeFilter === 'in_progress' ? 'active' : ''}`}
+            onClick={() => setActiveFilter('in_progress')}
           >
             In Progress
           </button>
@@ -857,7 +851,7 @@ export default function Tournaments() {
                       <span className="dot" />
                       {t.status === 'registration'
                         ? 'Registration Open'
-                        : t.status === 'ongoing'
+                        : t.status === 'in_progress'
                         ? 'In Progress'
                         : t.status === 'completed'
                         ? 'Completed'

@@ -5,7 +5,7 @@
 
 // ─── Types ────────────────────────────────────────────────────────
 
-export type TournamentStatus = 'registration' | 'ongoing' | 'completed' | 'cancelled';
+export type TournamentStatus = 'registration' | 'in_progress' | 'completed' | 'cancelled';
 
 export interface TournamentRewards {
   firstPlace?: { xp: number; title: string };
@@ -64,6 +64,18 @@ export interface BracketRound {
   roundNumber: number;
   title: string;
   matches: TournamentMatchNode[];
+}
+
+export interface TournamentLiveMatch {
+  tournamentMatchId: string;
+  arenaMatchId: string | null;
+  round: number;
+  matchIndex: number;
+  challengeTitle: string;
+  player1: { id: string | null; name: string | null };
+  player2: { id: string | null; name: string | null };
+  status: string;
+  remainingSeconds: number;
 }
 
 export interface TournamentUserContext {
@@ -125,7 +137,9 @@ async function apiFetch<T>(
         ok: false,
         status: res.status,
         data: null,
-        error: (data as any)?.error || `Request failed (${res.status})`,
+        error: typeof data === 'object' && data !== null && 'error' in data && typeof data.error === 'string'
+          ? data.error
+          : `Request failed (${res.status})`,
       };
     }
     return { ok: true, status: res.status, data: data as T, error: null };
@@ -221,7 +235,7 @@ export async function startTournamentMatch(token: string, tournamentId: string, 
 }
 
 export async function fetchTournamentLiveMatches(token: string | null | undefined, tournamentId: string) {
-  return apiFetch<{ matches: any[] }>(
+  return apiFetch<{ matches: TournamentLiveMatch[] }>(
     `/api/tournaments/${encodeURIComponent(tournamentId)}/live`,
     token
   );

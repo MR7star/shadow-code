@@ -119,7 +119,13 @@ export interface ArenaMatchChallenge {
   title: string;
   functionName: string;
   lesson: string;
-  sampleTests: any[];
+  sampleTests: SampleTestCase[];
+}
+
+export interface SampleTestCase {
+  input?: unknown;
+  expected?: unknown;
+  description?: string;
 }
 
 export interface ArenaMatchDetails {
@@ -158,7 +164,7 @@ export interface SpectatorMatchDetails {
     title: string;
     functionName: string;
     lesson?: string;
-    sampleTests: any[];
+    sampleTests: SampleTestCase[];
   };
   player1: {
     id: string;
@@ -306,7 +312,14 @@ async function apiFetch<T>(
     const data = await res.json().catch(() => null);
 
     if (!res.ok) {
-      return { ok: false, status: res.status, data: null, error: (data as any)?.error || `Request failed (${res.status})` };
+      return {
+        ok: false,
+        status: res.status,
+        data: null,
+        error: typeof data === 'object' && data !== null && 'error' in data && typeof data.error === 'string'
+          ? data.error
+          : `Request failed (${res.status})`,
+      };
     }
     return { ok: true, status: res.status, data: data as T, error: null };
   } catch (err) {
