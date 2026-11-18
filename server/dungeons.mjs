@@ -83,7 +83,7 @@ export const DUNGEON_DEFINITIONS = [
         isRequired: true,
         isBoss: false,
         stageTitle: 'The Key Vault',
-        stageLore: 'Dungeon keys encoded in even numbers. Filter the vault to find the paths forward.',
+        stageLore: 'The vault stores a hunter profile and shifting inventory records. Merge the dictionary updates without altering the original entries.',
       },
       {
         id: 'py-06',

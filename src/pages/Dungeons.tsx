@@ -1,146 +1,81 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleDot, Crown, DoorOpen, LockKeyhole, RotateCcw, ShieldAlert, Skull, Swords } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useProgression } from '../context/ProgressionContext';
+import { getChallengeById } from '../data/challenges';
+import { Button, DifficultyBadge, EmptyState, ErrorState, LoadingState, Panel, ProgressBar, RankBadge, StatCard, StatusBadge } from '../components/ui';
 import type { Dungeon, DungeonChallenge } from '../types';
 import './Dungeons.css';
 
-const API = '';
-
-// ─── Helpers ─────────────────────────────────────────────────────────────
-
-function difficultyLabel(d: string) {
-  const map: Record<string, string> = { E: 'E-Rank', D: 'D-Rank', C: 'C-Rank', B: 'B-Rank', A: 'A-Rank', S: 'S-Rank' };
-  return map[d] || d;
+function statusLabel(dungeon: Dungeon): string {
+  if (!dungeon.isAccessible) return 'Locked';
+  if (dungeon.status === 'in-progress') return 'In Progress';
+  return dungeon.status === 'completed' ? 'Cleared' : 'Available';
 }
 
-function stageIcon(dc: DungeonChallenge): string {
-  if (dc.isBoss) {
-    if (dc.status === 'completed') return '💀';
-    if (dc.status === 'available') return '👹';
-    return '🔒';
-  }
-  if (dc.status === 'completed') return '✓';
-  if (dc.status === 'available') return String(dc.order);
-  return '🔒';
+function Status({ dungeon }: { dungeon: Dungeon }) {
+  const status = dungeon.status === 'completed' ? 'completed' : dungeon.isAccessible ? 'active' : 'pending';
+  return <StatusBadge status={status}>{statusLabel(dungeon)}</StatusBadge>;
 }
 
-function stageIconClass(dc: DungeonChallenge): string {
-  if (dc.isBoss) {
-    if (dc.status === 'completed') return 'boss-completed';
-    if (dc.status === 'available') return 'boss-available';
-    return 'boss-locked';
-  }
-  return dc.status;
+function dungeonStageStatus(challenge: DungeonChallenge, dungeonAccessible: boolean) {
+  if (challenge.status === 'completed') return 'completed';
+  return dungeonAccessible && challenge.status === 'available' ? 'active' : 'pending';
 }
 
-function stageActionLabel(dc: DungeonChallenge): string {
-  if (dc.status === 'locked') return 'Locked';
-  if (dc.status === 'completed') return dc.isBoss ? 'Defeated ✓' : 'Completed ✓';
-  if (dc.isBoss) return dc.attempts > 0 ? `Retry Boss` : 'Fight Boss';
-  return dc.attempts > 0 ? 'Retry' : 'Enter';
+function getPrerequisiteTitle(id: string): string {
+  return getChallengeById(id)?.title || id;
 }
-
-function stageActionClass(dc: DungeonChallenge): string {
-  if (dc.status === 'locked') return 'locked';
-  if (dc.status === 'completed') return 'done';
-  if (dc.isBoss) return dc.attempts > 0 ? 'fight' : 'fight';
-  return dc.attempts > 0 ? 'retry' : 'enter';
-}
-
-// ─── DungeonCard (grid view) ─────────────────────────────────────────────
 
 interface DungeonCardProps {
   dungeon: Dungeon;
-  onEnter: (dungeonId: string) => void;
+  selected: boolean;
+  onSelect: (id: string) => void;
 }
 
-function DungeonCard({ dungeon, onEnter }: DungeonCardProps) {
-  const isLocked = !dungeon.isAccessible;
-  const sorted = [...dungeon.challenges].sort((a, b) => a.order - b.order);
-
+function DungeonCard({ dungeon, selected, onSelect }: DungeonCardProps) {
+  const ordered = [...dungeon.challenges].sort((a, b) => a.order - b.order);
+  const stateClass = !dungeon.isAccessible ? 'locked' : dungeon.status;
   return (
-    <div
-      id={`dungeon-card-${dungeon.id}`}
-      className={`dungeon-card dungeon-card--${dungeon.status}${isLocked ? ' dungeon-card--locked' : ''}`}
-      onClick={() => !isLocked && onEnter(dungeon.id)}
-      role="button"
-      tabIndex={isLocked ? -1 : 0}
-      aria-label={`${dungeon.name} dungeon — ${dungeon.status}`}
-      onKeyDown={(e) => { if (!isLocked && (e.key === 'Enter' || e.key === ' ')) onEnter(dungeon.id); }}
-    >
-      {/* Difficulty colour stripe */}
-      <div className={`dungeon-card__banner dungeon-card__banner--${dungeon.difficulty}`} />
-
-      <div className="dungeon-card__body">
-        <div className="dungeon-card__header">
-          <h3 className="dungeon-card__title">{dungeon.name}</h3>
-          <div className="dungeon-card__badges">
-            <span className={`badge badge--difficulty-${dungeon.difficulty}`}>{difficultyLabel(dungeon.difficulty)}</span>
-            <span className={`badge badge--status-${dungeon.status}`}>
-              {dungeon.status === 'in-progress' ? 'In Progress' : dungeon.status.charAt(0).toUpperCase() + dungeon.status.slice(1)}
-            </span>
-          </div>
-        </div>
-
-        <p className="dungeon-card__description">{dungeon.description}</p>
-
-        {isLocked && dungeon.lockReason && (
-          <div className="dungeon-card__lock">
-            <span className="dungeon-card__lock-icon">🔒</span>
-            {dungeon.lockReason}
-          </div>
-        )}
-
-        {!isLocked && dungeon.status !== 'available' && (
-          <div className="dungeon-card__progress">
-            <div className="dungeon-card__progress-label">
-              <span>Progress</span>
-              <span>{dungeon.completedRequired}/{dungeon.totalRequired} stages</span>
-            </div>
-            <div className="dungeon-card__progress-bar">
-              <div
-                className={`dungeon-card__progress-fill${dungeon.status === 'completed' ? ' dungeon-card__progress-fill--completed' : ''}`}
-                style={{ width: `${dungeon.progressPercent}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Mini stage map */}
-        <div className="dungeon-card__stages" aria-label="Dungeon stages">
-          {sorted.map((dc, i) => (
-            <span key={dc.id} style={{ display: 'contents' }}>
-              {i > 0 && (
-                <div className={`stage-connector${dc.status === 'completed' ? ' stage-connector--completed' : ''}`} />
-              )}
-              <div
-                className={`stage-node stage-node--${dc.status}${dc.isBoss ? ' stage-node--boss' : ''}`}
-                title={dc.stageTitle}
-              >
-                {stageIcon(dc)}
-              </div>
-            </span>
-          ))}
-        </div>
-
-        <div className="dungeon-card__footer">
-          <span className="dungeon-card__xp">⚡ <span>{dungeon.xpReward.toLocaleString()}</span> XP Reward</span>
-          <button
-            id={`dungeon-enter-${dungeon.id}`}
-            className={`dungeon-card__enter-btn dungeon-card__enter-btn--${isLocked ? 'locked' : dungeon.status}`}
-            onClick={(e) => { e.stopPropagation(); !isLocked && onEnter(dungeon.id); }}
-            disabled={isLocked}
-            aria-label={isLocked ? 'Dungeon locked' : `Enter ${dungeon.name}`}
-          >
-            {isLocked ? '🔒 Locked' : dungeon.status === 'completed' ? '↩ Revisit' : dungeon.status === 'in-progress' ? '▶ Continue' : '▶ Enter'}
-          </button>
-        </div>
+    <Panel as="article" variant="interactive" className={`expedition-card expedition-card--${stateClass}${selected ? ' is-selected' : ''}`}>
+      <div className={`expedition-card__stripe expedition-card__stripe--${dungeon.difficulty}`} />
+      <div className="expedition-card__topline">
+        <span className="expedition-card__gate"><DoorOpen size={15} aria-hidden="true" /> GATE // {dungeon.id.slice(-3)}</span>
+        <Status dungeon={dungeon} />
       </div>
-    </div>
+      <div className="expedition-card__heading">
+        <div>
+          <h2>{dungeon.name}</h2>
+          <p>{dungeon.description}</p>
+        </div>
+        <DifficultyBadge difficulty={dungeon.difficulty} />
+      </div>
+      <div className="expedition-card__facts">
+        <span><ShieldAlert size={15} aria-hidden="true" /> Entry rank <RankBadge rank={dungeon.requiredRank} /></span>
+        <span><CircleDot size={15} aria-hidden="true" /> {dungeon.totalRequired} required stages</span>
+      </div>
+      {!dungeon.isAccessible && dungeon.lockReason && (
+        <div className="expedition-card__lock"><LockKeyhole size={15} aria-hidden="true" /><span>{dungeon.lockReason}</span></div>
+      )}
+      {dungeon.isAccessible && dungeon.status !== 'available' && (
+        <div className="expedition-card__progress">
+          <div><span>Expedition progress</span><strong>{dungeon.completedRequired}/{dungeon.totalRequired}</strong></div>
+          <ProgressBar value={dungeon.completedRequired} max={dungeon.totalRequired} variant={dungeon.status === 'completed' ? 'success' : 'purple'} label={`${dungeon.name} progress`} />
+        </div>
+      )}
+      <div className="expedition-card__route" aria-label={`${ordered.length} stages, final encounter ${ordered.find((item) => item.isBoss)?.stageTitle ?? 'not designated'}`}>
+        {ordered.map((stage, index) => <span className={`expedition-card__node expedition-card__node--${stage.status}${stage.isBoss ? ' is-boss' : ''}`} key={stage.id} title={`${stage.stageTitle}${stage.isBoss ? ' · Boss encounter' : ''}`}>
+          {stage.status === 'completed' ? <Check size={13} aria-hidden="true" /> : stage.isBoss ? <Skull size={13} aria-hidden="true" /> : index + 1}
+        </span>)}
+      </div>
+      <div className="expedition-card__reward"><span>Clear reward</span><strong>+{dungeon.xpReward.toLocaleString()} XP</strong><span className="expedition-card__title-reward">{dungeon.bonusTitle}</span></div>
+      <Button className="expedition-card__action" variant={selected ? 'secondary' : 'primary'} icon={<ArrowRight size={16} aria-hidden="true" />} onClick={() => onSelect(dungeon.id)}>
+        {!dungeon.isAccessible ? 'View requirements' : dungeon.status === 'completed' ? 'Review expedition' : dungeon.status === 'in-progress' ? 'Continue expedition' : 'View expedition'}
+      </Button>
+    </Panel>
   );
 }
-
-// ─── DungeonDetail (map view) ─────────────────────────────────────────────
 
 interface DungeonDetailProps {
   dungeon: Dungeon;
@@ -149,294 +84,128 @@ interface DungeonDetailProps {
 }
 
 function DungeonDetail({ dungeon, onBack, onEnterChallenge }: DungeonDetailProps) {
-  const sorted = [...dungeon.challenges].sort((a, b) => a.order - b.order);
-  const bossChallenge = dungeon.challenges.find((c) => c.isBoss);
-  const bossAttempts = bossChallenge?.attempts || 0;
-  const bossHealthPct = bossChallenge?.status === 'completed' ? 0 : Math.max(10, 100 - bossAttempts * 15);
-
+  const ordered = [...dungeon.challenges].sort((a, b) => a.order - b.order);
+  const boss = ordered.find((stage) => stage.isBoss);
+  const isComplete = dungeon.status === 'completed';
   return (
-    <div className="dungeon-detail">
-      <button
-        id="dungeon-back-btn"
-        className="dungeon-detail__back"
-        onClick={onBack}
-        aria-label="Back to dungeon list"
-      >
-        ← Back to Dungeons
-      </button>
-
-      {/* Hero section */}
-      <div className="dungeon-detail__hero">
-        <div className="dungeon-detail__hero-top">
-          <div>
-            <h1 className="dungeon-detail__name">{dungeon.name}</h1>
-            <p className="dungeon-detail__rank-req">
-              Requires: <strong>{dungeon.requiredRank}</strong>
-            </p>
-          </div>
-          <span className={`badge badge--difficulty-${dungeon.difficulty}`}>{difficultyLabel(dungeon.difficulty)}</span>
+    <main className="dungeon-detail expedition-page" aria-label={`${dungeon.name} expedition dossier`}>
+      <Button variant="ghost" className="expedition-back" onClick={onBack} icon={<ArrowLeft size={16} aria-hidden="true" />}>All gates</Button>
+      <Panel variant="elevated" className={`dossier-hero${boss && boss.status !== 'completed' ? ' dossier-hero--danger' : ''}`}>
+        <div className="dossier-hero__eyebrow"><span>EXPEDITION DOSSIER</span><Status dungeon={dungeon} /></div>
+        <div className="dossier-hero__title-row"><div><h1>{dungeon.name}</h1><p>{dungeon.lore}</p></div><DifficultyBadge difficulty={dungeon.difficulty} /></div>
+        <div className="dossier-hero__facts">
+          <div><span>Entry rank</span><RankBadge rank={dungeon.requiredRank} /></div>
+          <div><span>Stages</span><strong>{dungeon.totalRequired} required</strong></div>
+          <div><span>Clear reward</span><strong className="is-gold">+{dungeon.xpReward.toLocaleString()} XP</strong></div>
+          <div><span>Title reward</span><strong className="is-gold">{dungeon.bonusTitle}</strong></div>
         </div>
+        {dungeon.isAccessible && dungeon.status !== 'available' && <div className="dossier-hero__progress">
+          <div><span>Stage completion</span><strong>{dungeon.completedRequired} of {dungeon.totalRequired}</strong></div>
+          <ProgressBar value={dungeon.completedRequired} max={dungeon.totalRequired} variant={isComplete ? 'success' : 'cyan'} label={`${dungeon.name} stage completion`} />
+        </div>}
+        {isComplete && <div className="expedition-victory" role="status"><Crown size={22} aria-hidden="true" /><div><strong>Gate cleared</strong><span>Completion rewards were processed automatically by the server.</span></div></div>}
+      </Panel>
 
-        <p className="dungeon-detail__lore">{dungeon.lore}</p>
+      <div className="dossier-grid">
+        <Panel className="dossier-requirements">
+          <div className="section-heading"><span className="section-heading__index">01</span><div><h2>Entry requirements</h2><p>Access is checked by the dungeon service.</p></div></div>
+          <div className="requirement-row"><ShieldAlert size={17} aria-hidden="true" /><span>Hunter rank</span><RankBadge rank={dungeon.requiredRank} /></div>
+          {dungeon.requiredChallenges.length > 0 ? <div className="prerequisite-list">
+            <span className="requirement-list-title">Mastered prerequisite challenges</span>
+            {dungeon.requiredChallenges.map((id) => <div className="requirement-row" key={id}><Check size={16} aria-hidden="true" /><span>{getPrerequisiteTitle(id)}</span></div>)}
+          </div> : <div className="requirement-row"><Check size={16} aria-hidden="true" /><span>No challenge prerequisites</span></div>}
+          {!dungeon.isAccessible && dungeon.lockReason && <div className="dossier-lock-message"><LockKeyhole size={16} aria-hidden="true" />{dungeon.lockReason}</div>}
+          <p className="dossier-entry-note">Selecting a gate opens its dossier. Progress is recorded when a challenge is successfully submitted.</p>
+        </Panel>
 
-        <div className="dungeon-detail__stats">
-          <div className="dungeon-detail__stat">
-            <span className="dungeon-detail__stat-label">XP Reward</span>
-            <span className="dungeon-detail__stat-value dungeon-detail__stat-value--xp">⚡ {dungeon.xpReward.toLocaleString()}</span>
+        <Panel className="dossier-encounters">
+          <div className="section-heading"><span className="section-heading__index">02</span><div><h2>Encounter sequence</h2><p>Clear required stages in order to advance.</p></div></div>
+          <div className="stage-sequence" role="list" aria-label={`${dungeon.name} stages`}>
+            {ordered.map((stage, index) => {
+              const open = dungeon.isAccessible && stage.status !== 'locked';
+              const meta = getChallengeById(stage.id);
+              return <div className={`stage-entry${stage.isBoss ? ' stage-entry--boss' : ''}${stage.status === 'completed' ? ' stage-entry--completed' : ''}${stage.status === 'locked' || !dungeon.isAccessible ? ' stage-entry--locked' : ''}`} role="listitem" key={stage.id}>
+                <div className="stage-entry__rail"><span className="stage-entry__node">{stage.status === 'completed' ? <Check size={16} aria-hidden="true" /> : stage.isBoss ? <Skull size={16} aria-hidden="true" /> : String(stage.order).padStart(2, '0')}</span>{index < ordered.length - 1 && <span className="stage-entry__connector" />}</div>
+                <div className="stage-entry__body">
+                  <div className="stage-entry__top"><span>{stage.isBoss ? 'BOSS ENCOUNTER' : `STAGE ${String(stage.order).padStart(2, '0')}`}</span><StatusBadge status={dungeonStageStatus(stage, dungeon.isAccessible)}>{stage.status === 'completed' ? 'Completed' : !dungeon.isAccessible || stage.status === 'locked' ? 'Locked' : 'Available'}</StatusBadge></div>
+                  <h3>{stage.stageTitle}</h3><p className="stage-entry__lore">{stage.stageLore}</p>
+                  <p className="stage-entry__challenge">Challenge <strong>{stage.title}</strong>{meta?.conceptId && <span> · {meta.conceptId}</span>}</p>
+                  <div className="stage-entry__detail-row"><span>{stage.isRequired ? 'Required' : 'Optional'}</span>{stage.attempts > 0 && <span>{stage.attempts} attempt{stage.attempts === 1 ? '' : 's'}</span>}</div>
+                  {stage.bestTotalCount > 0 && <div className="stage-entry__best"><span>Best evaluation · {stage.bestPassedCount}/{stage.bestTotalCount} tests</span><ProgressBar value={stage.bestPassedCount} max={stage.bestTotalCount} variant={stage.status === 'completed' ? 'success' : 'cyan'} label={`${stage.stageTitle} best test result`} /></div>}
+                  <Button variant={stage.isBoss ? 'danger' : stage.status === 'completed' ? 'secondary' : 'primary'} size="sm" disabled={!open} className="stage-entry__action" onClick={() => open && onEnterChallenge(dungeon.id, stage.id)} icon={stage.isBoss ? <Swords size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}>
+                    {!dungeon.isAccessible ? 'Dungeon locked' : stage.status === 'locked' ? 'Stage locked' : stage.status === 'completed' ? 'Review stage' : stage.isBoss ? 'Enter boss encounter' : stage.attempts > 0 ? 'Retry challenge' : 'Enter challenge'}
+                  </Button>
+                </div>
+              </div>;
+            })}
           </div>
-          <div className="dungeon-detail__stat">
-            <span className="dungeon-detail__stat-label">Stages</span>
-            <span className="dungeon-detail__stat-value">{dungeon.totalRequired}</span>
-          </div>
-          <div className="dungeon-detail__stat">
-            <span className="dungeon-detail__stat-label">Status</span>
-            <span className={`dungeon-detail__stat-value dungeon-detail__stat-value--${dungeon.status === 'completed' ? 'complete' : 'progress'}`}>
-              {dungeon.status === 'completed' ? '✓ Cleared' : dungeon.status === 'in-progress' ? 'In Progress' : dungeon.status.charAt(0).toUpperCase() + dungeon.status.slice(1)}
-            </span>
-          </div>
-          {dungeon.bonusTitle && dungeon.status === 'completed' && (
-            <div className="dungeon-detail__stat">
-              <span className="dungeon-detail__stat-label">Title Earned</span>
-              <span className="dungeon-detail__stat-value" style={{ color: '#f59e0b' }}>🏆 {dungeon.bonusTitle}</span>
-            </div>
-          )}
-        </div>
+          {boss && <div className="boss-brief"><Skull size={18} aria-hidden="true" /><span>Final encounter</span><strong>{boss.stageTitle}</strong><span>{boss.attempts > 0 ? `${boss.attempts} recorded attempt${boss.attempts === 1 ? '' : 's'}` : 'No attempts recorded'}</span></div>}
+        </Panel>
       </div>
-
-      {/* Progress bar */}
-      {dungeon.status !== 'available' && (
-        <div className="dungeon-detail__progress">
-          <div className="dungeon-detail__progress-header">
-            <span className="dungeon-detail__progress-title">Dungeon Progress</span>
-            <span className="dungeon-detail__progress-pct">{dungeon.progressPercent}%</span>
-          </div>
-          <div className="dungeon-detail__progress-bar">
-            <div
-              className={`dungeon-detail__progress-fill${dungeon.status === 'completed' ? ' dungeon-detail__progress-fill--complete' : ''}`}
-              style={{ width: `${dungeon.progressPercent}%` }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Boss health bar (only when boss is available or attempted) */}
-      {bossChallenge && (bossChallenge.status === 'available' || bossAttempts > 0) && (
-        <div className="boss-health" aria-label="Boss health bar">
-          <div className="boss-health__header">
-            <span className="boss-health__name">👹 {bossChallenge.stageTitle}</span>
-            <span className="boss-health__pct">{bossChallenge.status === 'completed' ? 'DEFEATED' : `${bossHealthPct}% HP`}</span>
-          </div>
-          <div className="boss-health__bar">
-            <div
-              className="boss-health__fill"
-              style={{ width: `${bossChallenge.status === 'completed' ? 0 : bossHealthPct}%` }}
-            />
-          </div>
-          {bossAttempts > 0 && (
-            <p className="boss-health__attempts">
-              {bossChallenge.status === 'completed'
-                ? `Defeated after ${bossAttempts} attempt${bossAttempts > 1 ? 's' : ''}`
-                : `Failed attempts: ${bossAttempts} — each failed attempt damages the boss`}
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Victory screen if dungeon completed */}
-      {dungeon.status === 'completed' && (
-        <div className="dungeon-victory" role="region" aria-label="Dungeon cleared">
-          <div className="dungeon-victory__icon">🏆</div>
-          <h2 className="dungeon-victory__title">Dungeon Cleared!</h2>
-          <p className="dungeon-victory__subtitle">{dungeon.name} has been conquered.</p>
-          <div className="dungeon-victory__rewards">
-            <div className="dungeon-victory__reward">
-              <div className="dungeon-victory__reward-label">Bonus XP</div>
-              <div className="dungeon-victory__reward-value">+{dungeon.xpReward.toLocaleString()}</div>
-            </div>
-            {dungeon.bonusTitle && (
-              <div className="dungeon-victory__reward">
-                <div className="dungeon-victory__reward-label">Title</div>
-                <div className="dungeon-victory__reward-value" style={{ fontSize: '1rem' }}>🏆 {dungeon.bonusTitle}</div>
-              </div>
-            )}
-          </div>
-          <div className="dungeon-victory__actions">
-            <button
-              id="dungeon-victory-back"
-              className="dungeon-victory__btn dungeon-victory__btn--secondary"
-              onClick={onBack}
-            >
-              ← All Dungeons
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Stage map */}
-      <div className="dungeon-map" role="list" aria-label="Dungeon stages">
-        <h2 className="dungeon-map__title">Encounter Sequence</h2>
-        {sorted.map((dc, i) => {
-          return (
-            <span key={dc.id} style={{ display: 'contents' }}>
-              {i > 0 && (
-                <div
-                  className={`dungeon-map__connector${sorted[i - 1].status === 'completed' ? ' dungeon-map__connector--done' : ''}`}
-                />
-              )}
-              <div
-                id={`dungeon-stage-${dungeon.id}-${dc.id}`}
-                className={`dungeon-stage dungeon-stage--${dc.status}${dc.isBoss ? ' dungeon-stage--boss' : ''}`}
-                role="listitem"
-                onClick={() => {
-                  if (dc.status !== 'locked') onEnterChallenge(dungeon.id, dc.id);
-                }}
-                tabIndex={dc.status !== 'locked' ? 0 : -1}
-                onKeyDown={(e) => {
-                  if (dc.status !== 'locked' && (e.key === 'Enter' || e.key === ' ')) onEnterChallenge(dungeon.id, dc.id);
-                }}
-                aria-label={`${dc.stageTitle} — ${dc.status}`}
-              >
-                <div className={`dungeon-stage__icon dungeon-stage__icon--${stageIconClass(dc)}`}>
-                  {stageIcon(dc)}
-                </div>
-                <div className="dungeon-stage__info">
-                  <div className="dungeon-stage__order">
-                    {dc.isBoss ? '⚠ Boss Encounter' : `Stage ${dc.order}`}
-                  </div>
-                  <h3 className="dungeon-stage__title">{dc.stageTitle}</h3>
-                  <p className="dungeon-stage__lore">{dc.stageLore}</p>
-                </div>
-                <div className="dungeon-stage__meta">
-                  {dc.attempts > 0 && (
-                    <span className="dungeon-stage__attempts">
-                      {dc.status === 'completed'
-                        ? `Cleared in ${dc.attempts} attempt${dc.attempts > 1 ? 's' : ''}`
-                        : `${dc.attempts} failed attempt${dc.attempts > 1 ? 's' : ''}`}
-                    </span>
-                  )}
-                  <button
-                    id={`stage-action-${dungeon.id}-${dc.id}`}
-                    className={`dungeon-stage__action dungeon-stage__action--${stageActionClass(dc)}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (dc.status !== 'locked') onEnterChallenge(dungeon.id, dc.id);
-                    }}
-                    disabled={dc.status === 'locked'}
-                    aria-label={`${stageActionLabel(dc)} — ${dc.stageTitle}`}
-                  >
-                    {stageActionLabel(dc)}
-                  </button>
-                </div>
-              </div>
-            </span>
-          );
-        })}
-      </div>
-    </div>
+    </main>
   );
 }
 
-// ─── Main Dungeons Page ───────────────────────────────────────────────────
-
 export default function Dungeons() {
-  const { token } = useAuth();
+  const { token, isLoading: authLoading } = useAuth();
+  const { player } = useProgression();
   const navigate = useNavigate();
   const [dungeons, setDungeons] = useState<Dungeon[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedDungeonId, setSelectedDungeonId] = useState<string | null>(null);
+  const requestSequence = useRef(0);
 
   const fetchDungeons = useCallback(async () => {
-    if (!token) return;
+    if (authLoading) return;
+    const id = ++requestSequence.current;
+    if (!token) { setLoading(false); setDungeons([]); setError(null); return; }
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API}/api/dungeons`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`Server error: ${res.status}`);
-      const data = await res.json();
-      setDungeons(data.dungeons || []);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load dungeons.');
+      const res = await fetch('/api/dungeons', { headers: { Authorization: `Bearer ${token}` } });
+      const payload: unknown = await res.json();
+      if (!res.ok) {
+        const message = typeof payload === 'object' && payload !== null && 'error' in payload && typeof payload.error === 'string' ? payload.error : `Unable to load dungeon gates (${res.status}).`;
+        throw new Error(message);
+      }
+      const result = payload as { dungeons?: Dungeon[] };
+      if (id === requestSequence.current) setDungeons(Array.isArray(result.dungeons) ? result.dungeons : []);
+    } catch (cause) {
+      if (id === requestSequence.current) setError(cause instanceof Error ? cause.message : 'Unable to load dungeon gates.');
     } finally {
-      setLoading(false);
+      if (id === requestSequence.current) setLoading(false);
     }
-  }, [token]);
+  }, [authLoading, token]);
 
-  useEffect(() => { fetchDungeons(); }, [fetchDungeons]);
+  useEffect(() => { void fetchDungeons(); }, [fetchDungeons]);
 
-  const handleEnterDungeon = useCallback((dungeonId: string) => {
-    setSelectedDungeonId(dungeonId);
-  }, []);
+  const selectedDungeon = useMemo(() => dungeons.find((dungeon) => dungeon.id === selectedDungeonId) ?? null, [dungeons, selectedDungeonId]);
+  const availableCount = dungeons.filter((dungeon) => dungeon.isAccessible && dungeon.status !== 'completed').length;
+  const completedCount = dungeons.filter((dungeon) => dungeon.status === 'completed').length;
+  const enterChallenge = useCallback((dungeonId: string, challengeId: string) => navigate(`/dungeon/${dungeonId}/challenge/${challengeId}`), [navigate]);
 
-  const handleEnterChallenge = useCallback(
-    (dungeonId: string, challengeId: string) => {
-      navigate(`/dungeon/${dungeonId}/challenge/${challengeId}`);
-    },
-    [navigate]
-  );
+  if (authLoading || loading) return <main className="dungeons-state-page"><LoadingState label="Scanning dungeon gates" lines={3} /></main>;
+  if (!token) return <main className="dungeons-state-page"><EmptyState icon={<LockKeyhole size={24} />} title="Hunter access required" description="Sign in to view dungeon availability and your expedition progress." /></main>;
+  if (error) return <main className="dungeons-state-page"><ErrorState message={error} onRetry={() => void fetchDungeons()} retryLabel="Retry dungeon scan" /></main>;
+  if (dungeons.length === 0) return <main className="dungeons-state-page"><EmptyState icon={<DoorOpen size={24} />} title="No gates detected" description="The dungeon service returned no available gate records." /></main>;
 
-  const handleBack = useCallback(() => {
-    setSelectedDungeonId(null);
-    fetchDungeons();
-  }, [fetchDungeons]);
+  if (selectedDungeon) return <DungeonDetail dungeon={selectedDungeon} onBack={() => { setSelectedDungeonId(null); void fetchDungeons(); }} onEnterChallenge={enterChallenge} />;
 
-  if (!token) {
-    return (
-      <div className="dungeons-error">
-        <p>🔒 Sign in to access dungeons.</p>
+  return <main className="dungeons-page" aria-label="Dungeon gate command">
+    <header className="gate-command">
+      <div className="gate-command__copy"><span className="gate-command__eyebrow"><span className="gate-command__pulse" /> HUNTER ASSOCIATION // FIELD INTELLIGENCE</span><h1>DUNGEON <em>GATE</em></h1><p>Unstable territory detected. Review the entry conditions before deploying.</p></div>
+      <div className="gate-command__identity"><span>REGISTERED HUNTER</span><RankBadge rank={player.rank} /><strong>Rank clearance</strong></div>
+      <div className="gate-command__stats">
+        <StatCard label="Known gates" value={dungeons.length} icon={<DoorOpen size={17} />} description="Records returned by the dungeon service" />
+        <StatCard label="Accessible" value={availableCount} icon={<CircleDot size={17} />} description="Available or in progress" />
+        <StatCard label="Cleared" value={completedCount} icon={<Check size={17} />} description="Completion recorded" />
       </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="dungeons-loading" role="status" aria-label="Loading dungeons">
-        <div className="dungeons-loading__spinner" />
-        <span>Scanning dungeon gates…</span>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="dungeons-error" role="alert">
-        <p>⚠ {error}</p>
-        <button onClick={fetchDungeons}>Retry</button>
-      </div>
-    );
-  }
-
-  // Detail view
-  if (selectedDungeonId) {
-    const dungeon = dungeons.find((d) => d.id === selectedDungeonId);
-    if (!dungeon) return null;
-    return (
-      <DungeonDetail
-        dungeon={dungeon}
-        onBack={handleBack}
-        onEnterChallenge={handleEnterChallenge}
-      />
-    );
-  }
-
-  // Grid view
-  return (
-    <main className="dungeons-page" aria-label="Dungeons">
-      <div className="dungeons-header">
-        <h1>🏰 Programming Dungeons</h1>
-        <p>Conquer sequences of challenges and defeat Boss encounters to earn bonus XP and legendary titles.</p>
-      </div>
-      <div className="dungeons-grid" role="list" aria-label="Dungeon list">
-        {dungeons.map((dungeon) => (
-          <DungeonCard
-            key={dungeon.id}
-            dungeon={dungeon}
-            onEnter={handleEnterDungeon}
-          />
-        ))}
-      </div>
-    </main>
-  );
+    </header>
+    <section className="gate-selection" aria-labelledby="gate-selection-title">
+      <div className="gate-section-heading"><div><span>DEPLOYMENT BOARD</span><h2 id="gate-selection-title">Known dungeon gates</h2></div><span className="gate-section-heading__note">Select a gate to inspect its dossier</span></div>
+      <div className="dungeons-grid">{dungeons.map((dungeon) => <DungeonCard key={dungeon.id} dungeon={dungeon} selected={false} onSelect={setSelectedDungeonId} />)}</div>
+    </section>
+    <footer className="gate-command__footer"><RotateCcw size={14} aria-hidden="true" /><span>Gate status and progression are supplied by the dungeon service.</span></footer>
+  </main>;
 }

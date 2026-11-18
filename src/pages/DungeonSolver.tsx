@@ -6,7 +6,7 @@
  *  - Routes: /dungeon/:dungeonId/challenge/:challengeId
  *  - API calls: /api/dungeons/:dungeonId/challenge/:challengeId/run|submit
  *  - Access validated server-side (prerequisites, unlock order, rank)
- *  - Shows boss health bar and dungeon completion reward panel
+ *  - Shows boss attempt status and dungeon completion reward panel
  *  - Victory triggers dungeon-level XP award (server-side, exactly-once)
  */
 
@@ -16,6 +16,7 @@ import { useAuth } from '../context/AuthContext';
 import { useProgression } from '../context/ProgressionContext';
 import { getChallengeById } from '../data/challenges';
 import CodeEditor from '../components/editor/CodeEditor';
+import { Button, Modal, Toast } from '../components/ui';
 import type { Dungeon, DungeonChallenge, DungeonSubmitResult } from '../types';
 import type { QuestDifficulty } from '../types';
 import './QuestSolver.css';   // Reuse existing editor styles
@@ -59,33 +60,12 @@ interface BossVictoryProps {
 
 function BossVictoryOverlay({ dungeon, dungeonXpAwarded, onContinue, onBackToDungeon }: BossVictoryProps) {
   return (
-    <div
-      style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        zIndex: 1000, padding: '2rem',
-      }}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Dungeon cleared"
-    >
-      <div
-        style={{
-          background: 'linear-gradient(145deg, #0d0824, #1a0a3c)',
-          border: '1px solid rgba(167,139,250,0.3)',
-          borderRadius: '1.25rem',
-          padding: '3rem 2.5rem',
-          maxWidth: '480px',
-          width: '100%',
-          textAlign: 'center',
-        }}
-      >
+    <Modal open title="Dungeon cleared" onClose={onContinue} className="dungeon-victory-modal">
+      <div className="dungeon-victory">
         <div className="dungeon-victory__icon">👑</div>
-        <h2 className="dungeon-victory__title" style={{ marginTop: '1rem' }}>
-          Dungeon Cleared!
-        </h2>
-        <p className="dungeon-victory__subtitle">{dungeon.name} has been conquered!</p>
-        <div className="dungeon-victory__rewards" style={{ marginTop: '1.5rem' }}>
+        <h2 className="dungeon-victory__title">Dungeon Cleared!</h2>
+        <p className="dungeon-victory__subtitle">{dungeon.name} has been conquered.</p>
+        <div className="dungeon-victory__rewards">
           {dungeonXpAwarded > 0 && (
             <div className="dungeon-victory__reward">
               <div className="dungeon-victory__reward-label">Bonus XP Earned</div>
@@ -101,24 +81,16 @@ function BossVictoryOverlay({ dungeon, dungeonXpAwarded, onContinue, onBackToDun
             </div>
           )}
         </div>
-        <div className="dungeon-victory__actions" style={{ marginTop: '2rem' }}>
-          <button
-            id="boss-victory-back-dungeons"
-            className="dungeon-victory__btn dungeon-victory__btn--primary"
-            onClick={onBackToDungeon}
-          >
+        <div className="dungeon-victory__actions">
+          <Button id="boss-victory-back-dungeons" onClick={onBackToDungeon}>
             ← All Dungeons
-          </button>
-          <button
-            id="boss-victory-continue"
-            className="dungeon-victory__btn dungeon-victory__btn--secondary"
-            onClick={onContinue}
-          >
+          </Button>
+          <Button id="boss-victory-continue" variant="secondary" onClick={onContinue}>
             Close
-          </button>
+          </Button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -127,7 +99,7 @@ function BossVictoryOverlay({ dungeon, dungeonXpAwarded, onContinue, onBackToDun
 export default function DungeonSolver() {
   const { dungeonId, challengeId } = useParams<{ dungeonId: string; challengeId: string }>();
   const navigate = useNavigate();
-  const { token, isAuthenticated, openAuthModal } = useAuth();
+  const { token, isAuthenticated, isLoading: authLoading, openAuthModal } = useAuth();
   const { applyServerAward, refreshProgress } = useProgression();
 
   // Load challenge metadata from existing frontend data
@@ -155,12 +127,25 @@ export default function DungeonSolver() {
 
   // Victory overlay
   const [showVictory, setShowVictory] = useState(false);
+  const [completionToast, setCompletionToast] = useState(false);
   const hasPlayedVictory = useRef(false);
 
   // ── Fetch dungeon ────────────────────────────────────────────────────────
 
   const fetchDungeon = useCallback(async () => {
-    if (!token || !dungeonId) return;
+    if (authLoading) return;
+    if (!token) {
+      setDungeon(null);
+      setDungeonChallenge(null);
+      setDungeonError(null);
+      setDungeonLoading(false);
+      return;
+    }
+    if (!dungeonId) {
+      setDungeonError('Dungeon not found.');
+      setDungeonLoading(false);
+      return;
+    }
     setDungeonLoading(true);
     setDungeonError(null);
     try {
@@ -184,7 +169,7 @@ export default function DungeonSolver() {
     } finally {
       setDungeonLoading(false);
     }
-  }, [token, dungeonId, challengeId]);
+  }, [authLoading, token, dungeonId, challengeId]);
 
   useEffect(() => { fetchDungeon(); }, [fetchDungeon]);
 
@@ -272,6 +257,7 @@ export default function DungeonSolver() {
         // Show dungeon victory screen for boss defeat that completes dungeon
         if (data.allPassed && data.dungeonComplete && !hasPlayedVictory.current) {
           hasPlayedVictory.current = true;
+          setCompletionToast(true);
           setTimeout(() => setShowVictory(true), 800);
         }
       }
@@ -298,13 +284,22 @@ export default function DungeonSolver() {
 
   const isBoss = dungeonChallenge?.isBoss || false;
   const bossAttempts = dungeonChallenge?.attempts || 0;
-  const bossHealthPct = dungeonChallenge?.status === 'completed' ? 0 : Math.max(10, 100 - bossAttempts * 15);
 
-  if (dungeonLoading) {
+  if (authLoading || dungeonLoading) {
     return (
       <div className="dungeons-loading" role="status" aria-label="Loading dungeon challenge">
         <div className="dungeons-loading__spinner" />
         <span>Entering the dungeon…</span>
+      </div>
+    );
+  }
+
+  if (!token) {
+    return (
+      <div className="dungeons-error" role="status">
+        <p>Sign in to access this dungeon challenge.</p>
+        <button onClick={openAuthModal}>Sign in</button>
+        <button onClick={() => navigate('/dungeons')}>← Back to Dungeons</button>
       </div>
     );
   }
@@ -332,11 +327,12 @@ export default function DungeonSolver() {
   return (
     <div className="quest-solver" aria-label={`Dungeon challenge: ${dungeonChallenge.stageTitle}`}>
       {/* Victory overlay for boss + dungeon completion */}
+      {completionToast && !showVictory && <div className="dungeon-toast"><Toast variant="success" title="Dungeon completion recorded" message={evalResult?.dungeonXpAwarded ? `${evalResult.dungeonXpAwarded.toLocaleString()} bonus XP awarded by the server.` : 'Completion rewards were processed by the server.'} onClose={() => setCompletionToast(false)} /></div>}
       {showVictory && dungeon && (
         <BossVictoryOverlay
           dungeon={dungeon}
           dungeonXpAwarded={evalResult?.dungeonXpAwarded || 0}
-          onContinue={() => setShowVictory(false)}
+        onContinue={() => { setShowVictory(false); setCompletionToast(false); }}
           onBackToDungeon={() => navigate('/dungeons')}
         />
       )}
@@ -391,28 +387,16 @@ export default function DungeonSolver() {
             </p>
           </div>
 
-          {/* Boss health bar */}
+          {/* Encounter status uses recorded attempts; no boss health mechanic exists. */}
           {isBoss && (
             <div className="boss-health">
               <div className="boss-health__header">
-                <span className="boss-health__name">👹 {dungeonChallenge.stageTitle}</span>
+                <span className="boss-health__name">Encounter · {dungeonChallenge.stageTitle}</span>
                 <span className="boss-health__pct">
-                  {dungeonChallenge.status === 'completed' ? 'DEFEATED' : `${bossHealthPct}% HP`}
+                  {dungeonChallenge.status === 'completed' ? 'CLEARED' : 'BOSS STAGE'}
                 </span>
               </div>
-              <div className="boss-health__bar">
-                <div
-                  className="boss-health__fill"
-                  style={{ width: `${dungeonChallenge.status === 'completed' ? 0 : bossHealthPct}%` }}
-                />
-              </div>
-              {bossAttempts > 0 && (
-                <p className="boss-health__attempts">
-                  {dungeonChallenge.status === 'completed'
-                    ? `Defeated after ${bossAttempts} attempt${bossAttempts !== 1 ? 's' : ''}`
-                    : `Failed attempts: ${bossAttempts} — pass ALL hidden tests to defeat the boss`}
-                </p>
-              )}
+              <p className="boss-health__attempts">{bossAttempts > 0 ? `${bossAttempts} recorded attempt${bossAttempts !== 1 ? 's' : ''}. ` : 'No attempts recorded. '}Submit a solution to evaluate this encounter.</p>
             </div>
           )}
 
@@ -515,40 +499,10 @@ export default function DungeonSolver() {
             </div>
           )}
 
-          {/* XP reward info */}
-          <div className="qs-section">
-            <div
-              style={{
-                background: 'rgba(245,158,11,0.08)',
-                border: '1px solid rgba(245,158,11,0.2)',
-                borderRadius: '0.75rem',
-                padding: '0.75rem 1rem',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
-              <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Stage Reward</span>
-              <span style={{ color: '#f59e0b', fontWeight: 700 }}>+{challengeMeta.xpReward} XP</span>
-            </div>
-            {isBoss && (
-              <div
-                style={{
-                  marginTop: '0.5rem',
-                  background: 'rgba(167,139,250,0.08)',
-                  border: '1px solid rgba(167,139,250,0.2)',
-                  borderRadius: '0.75rem',
-                  padding: '0.75rem 1rem',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                }}
-              >
-                <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Dungeon Completion Bonus</span>
-                <span style={{ color: '#a78bfa', fontWeight: 700 }}>+{dungeon.xpReward} XP</span>
-              </div>
-            )}
-          </div>
+          {isBoss && <div className="qs-section dungeon-reward-note">
+            <strong>Dungeon completion reward</strong>
+            <span>+{dungeon.xpReward.toLocaleString()} XP and the title {dungeon.bonusTitle}, awarded automatically when all required stages are complete.</span>
+          </div>}
         </div>
 
         {/* ── Right panel: code editor + results ───────────────────────────── */}
