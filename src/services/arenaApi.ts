@@ -430,10 +430,3 @@ export async function fetchSpectatorMatch(token: string | null | undefined, matc
     token || null
   );
 }
-
-export async function fetchTournamentLiveMatches(token: string | null | undefined, tournamentId: string) {
-  return apiFetch<{ matches: any[] }>(
-    `/api/tournaments/${encodeURIComponent(tournamentId)}/live`,
-    token || null
-  );
-}

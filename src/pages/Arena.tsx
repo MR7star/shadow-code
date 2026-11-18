@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
+import { Trophy } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import CodeEditor from '../components/editor/CodeEditor';
 import { pythonChallenges } from '../data/challenges';
@@ -1010,7 +1011,7 @@ function ArenaMatchWorkspace({
                 <div className="arena-problem-header">
                   <span className="arena-kicker">
                     {match.matchType === 'tournament'
-                      ? '🏆 Tournament Duel · Single Elimination'
+                      ? <><Trophy size={14} aria-hidden="true" /> Tournament Duel · Single Elimination</>
                       : `Algorithm Duel · Rank ${match.matchType.toUpperCase()}`}
                   </span>
                   <h2 className="arena-problem-title">{match.challenge.title}</h2>
@@ -1545,7 +1546,7 @@ function ArenaMatchWorkspace({
               <span className="arena-kicker">Rating Adjustment</span>
               {isTournamentMatch ? (
                 <div style={{ padding: '8px 0', color: 'var(--accent-cyan)', fontSize: '0.85rem', fontWeight: 600 }}>
-                  🏆 Tournament Match — Normal Ranked Arena Elo is strictly isolated (0 SR adjustment).
+                  <><Trophy size={16} aria-hidden="true" /> Tournament Match — Normal Ranked Arena Elo is strictly isolated (0 SR adjustment).</>
                 </div>
               ) : (
                 <div className="arena-rating-transition-row">
@@ -1594,7 +1595,7 @@ function ArenaMatchWorkspace({
                   className="arena-btn arena-btn-primary arena-btn-lg"
                   onClick={() => navigate(match.tournamentContext?.tournamentId ? `/tournaments/${match.tournamentContext.tournamentId}` : '/tournaments')}
                 >
-                  🏆 Return to Tournament Bracket
+                  <><Trophy size={16} aria-hidden="true" /> Return to Tournament Bracket</>
                 </button>
               ) : (
                 <button

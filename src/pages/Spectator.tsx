@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { AlertTriangle, ArrowLeft, Clock3, Crown, FileText, LockKeyhole, Radio, Shield, Swords, Trophy } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { fetchSpectatorMatch, type SpectatorMatchDetails } from '../services/arenaApi';
 import './Spectator.css';
@@ -89,7 +90,7 @@ export default function Spectator() {
     return (
       <div className="spectator-page">
         <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-muted)' }}>
-          <div style={{ fontSize: '2.5rem', marginBottom: '12px' }}>📡</div>
+          <Radio className="spectator-state-icon" aria-hidden="true" />
           <h2 style={{ color: 'var(--text-primary)' }}>Loading match details…</h2>
           <p>Connecting to the sanitized live match status feed.</p>
         </div>
@@ -101,11 +102,11 @@ export default function Spectator() {
     return (
       <div className="spectator-page">
         <div style={{ textAlign: 'center', padding: '60px 20px' }}>
-          <div style={{ fontSize: '2.5rem', marginBottom: '12px' }}>⚠️</div>
+          <AlertTriangle className="spectator-state-icon" aria-hidden="true" />
           <h2 style={{ color: '#f87171' }}>Broadcast Unavailable</h2>
           <p style={{ color: 'var(--text-muted)', marginBottom: '16px' }}>{error || 'Match not found.'}</p>
           <button className="spectator-nav-back" onClick={handleBack}>
-            ← Return
+            <ArrowLeft size={16} aria-hidden="true" /> Return
           </button>
         </div>
       </div>
@@ -128,13 +129,13 @@ export default function Spectator() {
       {/* Header Bar */}
       <div className="spectator-header">
         <button className="spectator-nav-back" onClick={handleBack}>
-          ← {match.tournamentContext ? `Back to ${match.tournamentContext.tournamentTitle}` : 'Back to Arena'}
+          <ArrowLeft size={16} aria-hidden="true" /> {match.tournamentContext ? `Back to ${match.tournamentContext.tournamentTitle}` : 'Back to Arena'}
         </button>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           {match.tournamentContext && (
             <span style={{ fontSize: '0.8rem', color: 'var(--accent-primary)', fontWeight: 700 }}>
-              🏆 {match.tournamentContext.tournamentTitle} · Round {match.tournamentContext.round}
+              <Trophy size={15} aria-hidden="true" /> {match.tournamentContext.tournamentTitle} · Round {match.tournamentContext.round}
             </span>
           )}
 
@@ -148,7 +149,7 @@ export default function Spectator() {
       {/* Match Conclusion Banner */}
       {isCompleted && (
         <div className="spectator-conclusion-banner" role="status" aria-live="polite">
-          <span>🏆</span>
+          <Trophy size={18} aria-hidden="true" />
           <span>
             {`Match Concluded — ${terminalResult}`}
           </span>
@@ -159,10 +160,10 @@ export default function Spectator() {
       <div className="spectator-hud">
         {/* Player 1 Card */}
         <div className={`spectator-combatant p1 ${isP1Winner ? 'winner' : ''}`}>
-          <div className="spectator-avatar">⚔️</div>
+          <div className="spectator-avatar" aria-hidden="true"><Swords size={24} /></div>
           <div className="spectator-combatant-info">
             <div className="spectator-combatant-name">
-              {match.player1.name} {isP1Winner && '👑'}
+              {match.player1.name} {isP1Winner && <Crown size={16} aria-label="Winner" />}
             </div>
             <div className="spectator-combatant-meta">
               <span>{match.player1.ratingBefore} SR</span>
@@ -190,7 +191,7 @@ export default function Spectator() {
         {/* Center: Timer & VS */}
         <div className="spectator-center-hud">
           <div className={`spectator-timer-card ${isUrgent ? 'urgent' : ''}`}>
-            <span>⏱️</span>
+            <Clock3 size={17} aria-hidden="true" />
             <span className="spectator-timer-digits">
               {isCompleted ? '00:00' : formatTimer(remainingSec)}
             </span>
@@ -203,10 +204,10 @@ export default function Spectator() {
 
         {/* Player 2 Card */}
         <div className={`spectator-combatant p2 ${isP2Winner ? 'winner' : ''}`}>
-          <div className="spectator-avatar">🛡️</div>
+          <div className="spectator-avatar" aria-hidden="true"><Shield size={24} /></div>
           <div className="spectator-combatant-info">
             <div className="spectator-combatant-name">
-              {match.player2.name} {isP2Winner && '👑'}
+              {match.player2.name} {isP2Winner && <Crown size={16} aria-label="Winner" />}
             </div>
             <div className="spectator-combatant-meta">
               <span>{match.player2.ratingBefore} SR</span>
@@ -237,7 +238,7 @@ export default function Spectator() {
         {/* Left Column: Challenge Overview & Sample Tests */}
         <div className="spectator-panel">
           <div className="spectator-panel-title">
-            <span>📜</span> Problem: {match.challenge.title}
+            <FileText size={17} aria-hidden="true" /> Problem: {match.challenge.title}
           </div>
 
           {match.challenge.functionName && (
@@ -276,10 +277,10 @@ export default function Spectator() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <div className="spectator-panel">
             <div className="spectator-panel-title">
-              <span>🛡️</span> Spectator Privacy Shield
+              <Shield size={17} aria-hidden="true" /> Spectator Privacy Shield
             </div>
             <div className="spectator-privacy-banner">
-              <span>🔒</span>
+              <LockKeyhole size={16} aria-hidden="true" />
               <span>All competitor source code and hidden test suites are strictly masked to preserve competitive integrity.</span>
             </div>
             <ul style={{ paddingLeft: '18px', color: 'var(--text-muted)', fontSize: '0.8rem', lineHeight: '1.7', margin: 0 }}>

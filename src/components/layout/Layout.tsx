@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { Trophy } from 'lucide-react';
 import { useProgression } from '../../context/ProgressionContext';
 import { useAuth } from '../../context/AuthContext';
 import './Layout.css';
@@ -7,7 +8,7 @@ import './Layout.css';
 interface NavItem {
   path: string;
   label: string;
-  icon: string;
+  icon: ReactNode;
   section: string;
   badge?: number;
 }
@@ -19,7 +20,7 @@ const baseNavItems: NavItem[] = [
   { path: '/guilds', label: 'Guilds', icon: '🛡️', section: 'main' },
   { path: '/seasons', label: 'Seasons', icon: '✨', section: 'main' },
   { path: '/arena', label: 'Ranked Arena', icon: '⚔️', section: 'main' },
-  { path: '/tournaments', label: 'Tournaments', icon: '🏆', section: 'main' },
+  { path: '/tournaments', label: 'Tournaments', icon: <Trophy size={18} aria-hidden="true" />, section: 'main' },
   { path: '/skills', label: 'Skill Tree', icon: '🌟', section: 'main' },
   { path: '/promotion', label: 'Promotion Trials', icon: '🏆', section: 'main' },
   { path: '/achievements', label: 'Achievements', icon: '🎖️', section: 'player' },
