@@ -57,9 +57,11 @@ export function LoadingState({ label = 'Loading', lines = 3 }: { label?: string;
   return <div className="scds-loading" role="status" aria-label={label} aria-busy="true">{Array.from({length: Math.max(1, lines)}, (_, i) => <span key={i} />)}<span className="scds-sr-only">{label}</span></div>;
 }
 
-export interface ModalProps { open: boolean; title: string; onClose: () => void; children: ReactNode; className?: string; }
-export function Modal({ open, title, onClose, children, className = '' }: ModalProps) {
-  const dialogRef = useRef<HTMLDivElement>(null); const titleId = useId();
+export interface ModalProps { open: boolean; title: string; description?: string; onClose: () => void; children: ReactNode; className?: string; }
+export function Modal({ open, title, description, onClose, children, className = '' }: ModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null); const titleId = useId(); const descriptionId = useId();
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement as HTMLElement | null;
@@ -67,19 +69,19 @@ export function Modal({ open, title, onClose, children, className = '' }: ModalP
     const focusable = () => dialog?.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])');
     dialog?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); onClose(); }
+      if (event.key === 'Escape') { event.preventDefault(); onCloseRef.current(); }
       if (event.key === 'Tab') {
         const items = focusable(); if (!items?.length) return;
         const first = items[0], last = items[items.length - 1];
-        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialog)) { event.preventDefault(); first.focus(); }
       }
     };
     document.addEventListener('keydown', onKeyDown);
     return () => { document.removeEventListener('keydown', onKeyDown); previous?.focus(); };
-  }, [open, onClose]);
+  }, [open]);
   if (!open) return null;
-  return <div className="scds-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div ref={dialogRef} className={`scds-modal ${className}`} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}><header><h2 id={titleId}>{title}</h2><button type="button" className="scds-icon-button" onClick={onClose} aria-label="Close dialog"><X size={18}/></button></header><div className="scds-modal-content">{children}</div></div></div>;
+  return <div className="scds-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div ref={dialogRef} className={`scds-modal ${className}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined} tabIndex={-1}><header><h2 id={titleId}>{title}</h2><button type="button" className="scds-icon-button" onClick={onClose} aria-label="Close dialog"><X size={18}/></button></header>{description && <p id={descriptionId} className="scds-modal-description">{description}</p>}<div className="scds-modal-content">{children}</div></div></div>;
 }
 
 export type ToastVariant = 'success' | 'error' | 'warning' | 'info';

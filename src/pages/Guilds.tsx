@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useProgression } from '../context/ProgressionContext';
@@ -6,11 +6,34 @@ import type {
   GuildSummary,
   GuildDetailsResponse,
   UserGuildProfileResponse,
-  GuildsListResponse,
 } from '../types';
+import { Button, EmptyState, ErrorState, LoadingState, Modal, Panel, ProgressBar, RankBadge, StatCard, StatusBadge, Toast } from '../components/ui';
+import {
+  claimGuildQuest,
+  createGuild,
+  fetchGuildDetails,
+  fetchGuildProfile,
+  fetchGuilds,
+  inviteGuildPlayer,
+  joinGuild,
+  kickGuildMember,
+  leaveGuild,
+  respondToGuildInvite,
+  transferGuildLeadership,
+  updateGuildMemberRole,
+} from '../services/guildApi';
 import './Guilds.css';
 
 const EMBLEM_OPTIONS = ['🛡️', '⚔️', '🐉', '🦅', '🐺', '⚡', '🔮', '👑', '🔥', '🌑', '🩸', '❄️'];
+
+interface ManagementConfirmation {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  pendingKey: string;
+  onConfirm: () => Promise<void>;
+  reopenTransfer?: boolean;
+}
 
 function getRankColor(rank: string): string {
   const map: Record<string, string> = {
@@ -29,17 +52,30 @@ function getRankColor(rank: string): string {
 export default function Guilds() {
   const { guildId: routeGuildId } = useParams<{ guildId?: string }>();
   const navigate = useNavigate();
-  const { token, isAuthenticated, openAuthModal } = useAuth();
+  const { token, user, isAuthenticated, isLoading: authLoading, openAuthModal } = useAuth();
   const { refreshProgress } = useProgression();
 
   // Guild State
   const [userProfile, setUserProfile] = useState<UserGuildProfileResponse | null>(null);
-  const [activeGuildDetails, setActiveGuildDetails] = useState<GuildDetailsResponse | null>(null);
+  const [guildDetailsData, setGuildDetailsData] = useState<GuildDetailsResponse | null>(null);
+  const [detailState, setDetailState] = useState<'idle' | 'loading' | 'loaded' | 'not-found' | 'forbidden' | 'error'>('idle');
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailRetry, setDetailRetry] = useState<number>(0);
+  const [detailRefresh, setDetailRefresh] = useState<number>(0);
+  const profileRequestId = useRef(0);
+  const profileControllerRef = useRef<AbortController | null>(null);
   const [discoveryList, setDiscoveryList] = useState<GuildSummary[]>([]);
-  const [totalPages, setTotalPages] = useState<number>(1);
+  const [totalPages, setTotalPages] = useState<number | null>(null);
+  const [totalGuilds, setTotalGuilds] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState<string>('');
+  const normalizedSearchQuery = searchQuery.trim();
   const [rankFilter, setRankFilter] = useState<string>('all');
+  const [discoveryLoading, setDiscoveryLoading] = useState<boolean>(false);
+  const [discoveryHasLoaded, setDiscoveryHasLoaded] = useState<boolean>(false);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [discoveryRetry, setDiscoveryRetry] = useState<number>(0);
   const [activeTab, setActiveTab] = useState<'members' | 'quests' | 'milestones' | 'discovery'>('members');
   const [actionMessage, setActionMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
@@ -48,105 +84,154 @@ export default function Guilds() {
   const [showInviteModal, setShowInviteModal] = useState<boolean>(false);
   const [showTransferModal, setShowTransferModal] = useState<boolean>(false);
   const [targetMemberForTransfer, setTargetMemberForTransfer] = useState<string>('');
+  const [confirmation, setConfirmation] = useState<ManagementConfirmation | null>(null);
+  const [pendingActions, setPendingActions] = useState<Set<string>>(() => new Set());
+  const [pendingInviteActions, setPendingInviteActions] = useState<Record<string, 'accept' | 'reject'>>({});
+  const pendingActionRef = useRef<Set<string>>(new Set());
+  const noticeTimeoutRef = useRef<number | null>(null);
+  const activeGuildViewIdRef = useRef<string | null>(null);
+  const [guildNameError, setGuildNameError] = useState<string | null>(null);
 
   // Form states
   const [newGuildName, setNewGuildName] = useState<string>('');
   const [newGuildDesc, setNewGuildDesc] = useState<string>('');
   const [newGuildEmblem, setNewGuildEmblem] = useState<string>('🛡️');
   const [inviteUsername, setInviteUsername] = useState<string>('');
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-
   // Helper to show temporary notification
   const showNotice = useCallback((text: string, type: 'success' | 'error' = 'success') => {
+    if (noticeTimeoutRef.current !== null) window.clearTimeout(noticeTimeoutRef.current);
     setActionMessage({ text, type });
-    setTimeout(() => setActionMessage(null), 4500);
+    noticeTimeoutRef.current = window.setTimeout(() => setActionMessage(null), 4500);
+  }, []);
+
+  useEffect(() => () => {
+    if (noticeTimeoutRef.current !== null) window.clearTimeout(noticeTimeoutRef.current);
+  }, []);
+
+  const runWithPending = useCallback(async (key: string, action: () => Promise<void>) => {
+    if (pendingActionRef.current.has(key)) return;
+    pendingActionRef.current.add(key);
+    setPendingActions(new Set(pendingActionRef.current));
+    try {
+      await action();
+    } finally {
+      pendingActionRef.current.delete(key);
+      setPendingActions(new Set(pendingActionRef.current));
+    }
   }, []);
 
   // Fetch current user's guild profile
   const fetchUserProfile = useCallback(async () => {
+    const requestId = ++profileRequestId.current;
+    profileControllerRef.current?.abort();
     if (!token || !isAuthenticated) {
       setUserProfile(null);
       return;
     }
-    try {
-      const res = await fetch('/api/guilds/me', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const data: UserGuildProfileResponse = await res.json();
-        setUserProfile(data);
-        if (data.inGuild && data.details) {
-          setActiveGuildDetails(data.details);
-        }
-      }
-    } catch (err) {
-      console.warn('Failed to fetch user guild profile:', err);
-    }
+    const controller = new AbortController();
+    profileControllerRef.current = controller;
+    const result = await fetchGuildProfile(token, controller.signal);
+    if (controller.signal.aborted || requestId !== profileRequestId.current) return;
+    if (result.ok && result.data) setUserProfile(result.data);
+    else console.warn('Failed to fetch user guild profile:', result.error);
   }, [token, isAuthenticated]);
 
-  // Fetch discovery guilds
-  const fetchGuildsList = useCallback(
-    async (page = 1, search = '', rank = 'all') => {
-      try {
-        const params = new URLSearchParams();
-        params.set('page', String(page));
-        params.set('limit', '12');
-        if (search.trim()) params.set('search', search.trim());
-        if (rank !== 'all') params.set('rank', rank);
-
-        const res = await fetch(`/api/guilds?${params.toString()}`);
-        if (res.ok) {
-          const data: GuildsListResponse = await res.json();
-          setDiscoveryList(data.guilds);
-          setTotalPages(data.totalPages || 1);
-          setCurrentPage(data.page || 1);
-        }
-      } catch (err) {
-        console.warn('Failed to fetch guilds list:', err);
-      }
-    },
-    []
-  );
-
-  // Fetch specific guild by ID (e.g. route /guilds/:guildId)
-  const fetchGuildById = useCallback(
-    async (id: string) => {
-      try {
-        const headers: Record<string, string> = {};
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-        const res = await fetch(`/api/guilds/${id}`, { headers });
-        if (res.ok) {
-          const data: GuildDetailsResponse = await res.json();
-          setActiveGuildDetails(data);
-        } else {
-          showNotice('Guild not found.', 'error');
-          navigate('/guilds');
-        }
-      } catch (err) {
-        console.warn('Failed to fetch guild details:', err);
-      }
-    },
-    [token, navigate, showNotice]
-  );
-
-  // Initialize
   useEffect(() => {
-    let cancelled = false;
-    async function init() {
-      await fetchUserProfile();
-      if (!cancelled) {
-        if (routeGuildId) {
-          await fetchGuildById(routeGuildId);
-        } else {
-          await fetchGuildsList(1, searchQuery, rankFilter);
-        }
-      }
+    profileRequestId.current += 1;
+    profileControllerRef.current?.abort();
+    profileControllerRef.current = null;
+    setUserProfile(null);
+    if (authLoading || !isAuthenticated || !token) return;
+    void fetchUserProfile();
+    return () => profileControllerRef.current?.abort();
+  }, [authLoading, isAuthenticated, token, fetchUserProfile]);
+
+  // Guild details are selected and loaded exclusively from the current route.
+  useEffect(() => {
+    if (!routeGuildId) {
+      setGuildDetailsData(null);
+      setDetailState('idle');
+      setDetailError(null);
+      return;
     }
-    void init();
-    return () => {
-      cancelled = true;
-    };
-  }, [fetchUserProfile, fetchGuildById, fetchGuildsList, routeGuildId]);
+
+    setActiveTab('members');
+    setGuildDetailsData(null);
+    setDetailError(null);
+    if (authLoading) {
+      setDetailState('idle');
+      return;
+    }
+
+    const controller = new AbortController();
+    setDetailState('loading');
+    void (async () => {
+      const result = await fetchGuildDetails(routeGuildId, isAuthenticated ? token : null, controller.signal);
+      if (controller.signal.aborted) return;
+      if (result.ok && result.data) {
+        if (result.data.guild.id !== routeGuildId) {
+          setDetailError('The server returned details for a different guild. Please retry.');
+          setDetailState('error');
+          return;
+        }
+        setGuildDetailsData(result.data);
+        setDetailState('loaded');
+        return;
+      }
+
+      setDetailError(result.error ?? 'Unable to load this guild. Please try again.');
+      if (result.status === 404) setDetailState('not-found');
+      else if (result.status === 401 || result.status === 403) setDetailState('forbidden');
+      else setDetailState('error');
+    })();
+    return () => controller.abort();
+  }, [routeGuildId, token, isAuthenticated, authLoading, detailRetry, detailRefresh]);
+
+  const refreshRouteDetails = useCallback(() => {
+    if (routeGuildId) setDetailRefresh((count) => count + 1);
+  }, [routeGuildId]);
+
+  // Debounce text input while rank and page changes can apply immediately.
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedSearchQuery(normalizedSearchQuery), 350);
+    return () => window.clearTimeout(timeout);
+  }, [normalizedSearchQuery]);
+
+  // A single effect owns public discovery requests and cancels obsolete ones.
+  useEffect(() => {
+    if (routeGuildId || activeTab !== 'discovery' || normalizedSearchQuery !== debouncedSearchQuery) return;
+
+    const controller = new AbortController();
+    setDiscoveryLoading(true);
+    setDiscoveryError(null);
+
+    void (async () => {
+      const result = await fetchGuilds({
+        page: currentPage,
+        limit: 12,
+        search: debouncedSearchQuery,
+        rank: rankFilter,
+      }, controller.signal);
+
+      if (controller.signal.aborted) return;
+      if (!result.ok || !result.data) {
+        setDiscoveryError(result.error ?? 'Unable to load guilds. Please try again.');
+        setDiscoveryHasLoaded(true);
+        setDiscoveryLoading(false);
+        return;
+      }
+
+      const data = result.data;
+      setDiscoveryList(data.guilds);
+      setTotalGuilds(Number.isFinite(data.total) ? data.total : null);
+      setTotalPages(Number.isFinite(data.totalPages) ? data.totalPages : null);
+      setCurrentPage(Number.isFinite(data.page) && data.page >= 1 ? data.page : currentPage);
+      setDiscoveryHasLoaded(true);
+      setDiscoveryLoading(false);
+    })();
+
+    return () => controller.abort();
+  }, [routeGuildId, activeTab, currentPage, normalizedSearchQuery, debouncedSearchQuery, rankFilter, discoveryRetry]);
 
   // If user is not in a guild and not viewing another guild, set tab to discovery
   useEffect(() => {
@@ -159,297 +244,265 @@ export default function Guilds() {
   const handleCreateGuild = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isAuthenticated) return openAuthModal();
-    if (!newGuildName.trim()) return showNotice('Guild name is required.', 'error');
-
-    setIsSubmitting(true);
-    try {
-      const res = await fetch('/api/guilds', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          name: newGuildName.trim(),
-          description: newGuildDesc.trim(),
-          emblem: newGuildEmblem,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showNotice(data.error || 'Failed to create guild.', 'error');
-      } else {
-        showNotice(`Guild "${data.guild.name}" created successfully!`);
-        setShowCreateModal(false);
-        setNewGuildName('');
-        setNewGuildDesc('');
-        await fetchUserProfile();
-        await refreshProgress();
-        setActiveTab('members');
-      }
-    } catch (err: any) {
-      showNotice(err.message || 'Error creating guild.', 'error');
-    } finally {
-      setIsSubmitting(false);
+    const name = newGuildName.trim();
+    if (!name || name.length < 3 || name.length > 30 || !/^[a-zA-Z0-9 _-]+$/.test(name)) {
+      setGuildNameError(!name
+        ? 'Guild name is required.'
+        : name.length < 3 || name.length > 30
+          ? 'Guild name must be between 3 and 30 characters.'
+          : 'Use letters, numbers, spaces, underscores, or hyphens.');
+      return;
     }
+    if (!token) return openAuthModal();
+
+    await runWithPending('create', async () => {
+      const result = await createGuild(token, { name, description: newGuildDesc.trim(), emblem: newGuildEmblem });
+      if (!result.ok || !result.data?.success || !result.data.guild?.id) {
+        showNotice(result.data?.error || result.error || 'Failed to create guild.', 'error');
+        return;
+      }
+
+      showNotice(`Guild "${result.data.guild.name}" created successfully!`);
+      setShowCreateModal(false);
+      setNewGuildName('');
+      setNewGuildDesc('');
+      setGuildNameError(null);
+      await fetchUserProfile();
+      await refreshProgress();
+      navigate(`/guilds/${result.data.guild.id}`);
+    });
   };
 
   // Handle Join Guild
   const handleJoinGuild = async (targetGuildId: string) => {
     if (!isAuthenticated) return openAuthModal();
-    try {
-      const res = await fetch(`/api/guilds/${targetGuildId}/join`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showNotice(data.error || 'Failed to join guild.', 'error');
-      } else {
-        showNotice('Successfully joined guild!');
-        await fetchUserProfile();
-        await refreshProgress();
-        navigate('/guilds');
+    if (!token) return openAuthModal();
+    await runWithPending(`join:${targetGuildId}`, async () => {
+      const result = await joinGuild(token, targetGuildId);
+      if (!result.ok || !result.data?.success) {
+        showNotice(result.data?.error || result.error || 'Failed to join guild.', 'error');
+        return;
       }
-    } catch (err: any) {
-      showNotice(err.message || 'Error joining guild.', 'error');
-    }
+      showNotice('Successfully joined guild!');
+      await fetchUserProfile();
+      await refreshProgress();
+      navigate(`/guilds/${targetGuildId}`);
+    });
   };
 
-  // Handle Leave Guild
-  const handleLeaveGuild = async () => {
-    if (!userProfile?.guild?.id) return;
-    const confirmLeave = window.confirm(
-      'Are you sure you want to leave your guild? If you are the leader and sole member, the guild will be disbanded.'
-    );
-    if (!confirmLeave) return;
-
-    try {
-      const res = await fetch(`/api/guilds/${userProfile.guild.id}/leave`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showNotice(data.error || 'Failed to leave guild.', 'error');
-      } else {
-        showNotice('You have left the guild.');
-        await fetchUserProfile();
-        await refreshProgress();
-        setActiveTab('discovery');
-        await fetchGuildsList(1);
-      }
-    } catch (err: any) {
-      showNotice(err.message || 'Error leaving guild.', 'error');
+  const performLeaveGuild = async () => {
+    if (!sessionProfile?.guild?.id || !token) return;
+    const result = await leaveGuild(token, sessionProfile.guild.id);
+    if (!result.ok || !result.data?.success) {
+      showNotice(result.data?.error || result.error || 'Failed to leave guild.', 'error');
+      return;
     }
+    showNotice('You have left the guild.');
+    setConfirmation(null);
+    await fetchUserProfile();
+    await refreshProgress();
+    setCurrentPage(1);
+    setActiveTab('discovery');
+    if (routeGuildId) navigate('/guilds');
+  };
+
+  const handleLeaveGuild = () => {
+    if (!sessionProfile?.guild?.id) return;
+    const soleLeader = isLeader && activeGuildDetails?.members.length === 1;
+    const leaderWithRoster = isLeader && (activeGuildDetails?.members.length ?? 0) > 1;
+    const description = soleLeader
+      ? 'Leaving as the sole leader will disband this guild. This cannot be undone.'
+      : leaderWithRoster
+        ? 'Leadership must be transferred to another guild member before you can leave. The server will enforce this rule.'
+        : 'You will leave this guild and lose access to its member-only sections.';
+    setConfirmation({ title: 'Leave Guild?', description, confirmLabel: 'Leave Guild', pendingKey: 'leave', onConfirm: performLeaveGuild });
   };
 
   // Handle Accept/Reject Invite
   const handleRespondInvite = async (guildId: string, inviteId: string, accept: boolean) => {
-    try {
-      const action = accept ? 'accept' : 'reject';
-      const res = await fetch(`/api/guilds/${guildId}/invites/${inviteId}/${action}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showNotice(data.error || `Failed to ${action} invite.`, 'error');
-      } else {
+    if (!token) return openAuthModal();
+    const action = accept ? 'accept' : 'reject';
+    await runWithPending(`invite:${inviteId}`, async () => {
+      setPendingInviteActions((current) => ({ ...current, [inviteId]: action }));
+      try {
+        const result = await respondToGuildInvite(token, guildId, inviteId, accept);
+        if (!result.ok || !result.data?.success) {
+          showNotice(result.data?.error || result.error || `Failed to ${action} invite.`, 'error');
+          return;
+        }
         showNotice(accept ? 'Invitation accepted! Welcome to the guild.' : 'Invitation rejected.');
         await fetchUserProfile();
         await refreshProgress();
+        if (accept) {
+          if (routeGuildId === guildId) refreshRouteDetails();
+          else navigate(`/guilds/${guildId}`);
+        }
+      } finally {
+        setPendingInviteActions((current) => {
+          const next = { ...current };
+          delete next[inviteId];
+          return next;
+        });
       }
-    } catch (err: any) {
-      showNotice(err.message || 'Error responding to invite.', 'error');
-    }
+    });
   };
 
   // Handle Invite Hunter
   const handleSendInvite = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeGuildDetails?.guild?.id || !inviteUsername.trim()) return;
-
-    setIsSubmitting(true);
-    try {
-      const res = await fetch(`/api/guilds/${activeGuildDetails.guild.id}/invite`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ targetUsername: inviteUsername.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showNotice(data.error || 'Failed to send invite.', 'error');
-      } else {
-        showNotice(`Invitation dispatched to ${data.targetUsername}!`);
-        setShowInviteModal(false);
-        setInviteUsername('');
+    if (!activeGuildDetails?.guild?.id || !inviteUsername.trim() || !token) return;
+    await runWithPending('invite-send', async () => {
+      const result = await inviteGuildPlayer(token, activeGuildDetails.guild.id, inviteUsername.trim());
+      if (!result.ok || !result.data?.success) {
+        showNotice(result.data?.error || result.error || 'Failed to send invite.', 'error');
+        return;
       }
-    } catch (err: any) {
-      showNotice(err.message || 'Error sending invite.', 'error');
-    } finally {
-      setIsSubmitting(false);
-    }
+      showNotice(`Invitation dispatched to ${result.data.targetUsername}!`);
+      setShowInviteModal(false);
+      setInviteUsername('');
+    });
   };
 
   // Handle Kick Member
-  const handleKickMember = async (targetUserId: string, targetName: string) => {
-    if (!activeGuildDetails?.guild?.id) return;
-    const confirmKick = window.confirm(`Are you sure you want to kick ${targetName} from the guild?`);
-    if (!confirmKick) return;
-
-    try {
-      const res = await fetch(`/api/guilds/${activeGuildDetails.guild.id}/kick`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ targetUserId }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showNotice(data.error || 'Failed to kick member.', 'error');
-      } else {
-        showNotice(`${targetName} has been removed from the guild.`);
-        await fetchUserProfile();
-        if (routeGuildId) await fetchGuildById(routeGuildId);
-      }
-    } catch (err: any) {
-      showNotice(err.message || 'Error kicking member.', 'error');
+  const performKickMember = async (targetUserId: string, targetName: string) => {
+    if (!activeGuildDetails?.guild?.id || !token) return;
+    const result = await kickGuildMember(token, activeGuildDetails.guild.id, targetUserId);
+    if (!result.ok || !result.data?.success) {
+      showNotice(result.data?.error || result.error || 'Failed to remove member.', 'error');
+      return;
     }
+    showNotice(`${targetName} has been removed from the guild.`);
+    setConfirmation(null);
+    refreshRouteDetails();
+    await fetchUserProfile();
+  };
+
+  const handleKickMember = (targetUserId: string, targetName: string) => {
+    setConfirmation({
+      title: 'Remove Guild Member?',
+      description: `Remove ${targetName} from this guild? They will lose access to member-only sections.`,
+      confirmLabel: 'Remove Member',
+      pendingKey: `kick:${targetUserId}`,
+      onConfirm: () => performKickMember(targetUserId, targetName),
+    });
   };
 
   // Handle Role Change (Promote / Demote)
-  const handleRoleChange = async (targetUserId: string, newRole: 'officer' | 'member') => {
-    if (!activeGuildDetails?.guild?.id) return;
-    try {
-      const res = await fetch(`/api/guilds/${activeGuildDetails.guild.id}/role`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ targetUserId, role: newRole }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showNotice(data.error || 'Failed to change member role.', 'error');
-      } else {
-        showNotice(`Member role updated to ${newRole}.`);
-        await fetchUserProfile();
-        if (routeGuildId) await fetchGuildById(routeGuildId);
-      }
-    } catch (err: any) {
-      showNotice(err.message || 'Error updating role.', 'error');
+  const performRoleChange = async (targetUserId: string, newRole: 'officer' | 'member', targetName: string) => {
+    if (!activeGuildDetails?.guild?.id || !token) return;
+    const result = await updateGuildMemberRole(token, activeGuildDetails.guild.id, targetUserId, newRole);
+    if (!result.ok || !result.data?.success) {
+      showNotice(result.data?.error || result.error || 'Failed to change member role.', 'error');
+      return;
     }
+    showNotice(`${targetName} is now a ${newRole}.`);
+    setConfirmation(null);
+    refreshRouteDetails();
+    await fetchUserProfile();
+  };
+
+  const handleRoleChange = (targetUserId: string, newRole: 'officer' | 'member', targetName: string) => {
+    const action = newRole === 'officer' ? 'promote' : 'change to member';
+    setConfirmation({
+      title: newRole === 'officer' ? 'Promote Guild Member?' : 'Change Member Role?',
+      description: `${action} ${targetName} ${newRole === 'officer' ? 'to Officer' : 'role to Member'}?`,
+      confirmLabel: newRole === 'officer' ? 'Promote to Officer' : 'Change to Member',
+      pendingKey: `role:${targetUserId}`,
+      onConfirm: () => performRoleChange(targetUserId, newRole, targetName),
+    });
   };
 
   // Handle Leadership Transfer
-  const handleTransferLeadership = async (e: React.FormEvent) => {
+  const performTransferLeadership = async (newLeaderId: string) => {
+    if (!activeGuildDetails?.guild?.id || !token) return;
+    const successor = activeGuildDetails.members.find((member) => member.userId === newLeaderId);
+    const result = await transferGuildLeadership(token, activeGuildDetails.guild.id, newLeaderId);
+    if (!result.ok || !result.data?.success) {
+      showNotice(result.data?.error || result.error || 'Failed to transfer leadership.', 'error');
+      return;
+    }
+    showNotice(`Leadership transferred to ${successor?.name ?? 'the selected member'}.`);
+    setConfirmation(null);
+    setShowTransferModal(false);
+    refreshRouteDetails();
+    await fetchUserProfile();
+  };
+
+  const handleTransferLeadership = (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeGuildDetails?.guild?.id || !targetMemberForTransfer) return;
-
-    const confirmTransfer = window.confirm(
-      'Are you sure you want to step down and transfer Guild Leadership? This action cannot be undone.'
-    );
-    if (!confirmTransfer) return;
-
-    setIsSubmitting(true);
-    try {
-      const res = await fetch(`/api/guilds/${activeGuildDetails.guild.id}/transfer-leadership`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ newLeaderId: targetMemberForTransfer }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showNotice(data.error || 'Failed to transfer leadership.', 'error');
-      } else {
-        showNotice('Guild Leadership transferred successfully!');
-        setShowTransferModal(false);
-        await fetchUserProfile();
-        if (routeGuildId) await fetchGuildById(routeGuildId);
-      }
-    } catch (err: any) {
-      showNotice(err.message || 'Error transferring leadership.', 'error');
-    } finally {
-      setIsSubmitting(false);
-    }
+    const successor = activeGuildDetails.members.find((member) => member.userId === targetMemberForTransfer);
+    const newLeaderId = targetMemberForTransfer;
+    setShowTransferModal(false);
+    setConfirmation({
+      title: 'Transfer Guild Leadership?',
+      description: `Transfer leadership to ${successor?.name ?? 'the selected member'}? You will step down from the Leader role. The server verifies that the successor is a current guild member.`,
+      confirmLabel: 'Transfer Leadership',
+      pendingKey: 'transfer',
+      reopenTransfer: true,
+      onConfirm: () => performTransferLeadership(newLeaderId),
+    });
   };
 
   // Handle Claim Quest Reward
   const handleClaimQuest = async (questId: string) => {
-    if (!activeGuildDetails?.guild?.id) return;
-    try {
-      const res = await fetch(`/api/guilds/${activeGuildDetails.guild.id}/quests/${questId}/claim`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showNotice(data.error || 'Failed to claim quest reward.', 'error');
-      } else {
-        showNotice(`Guild quest reward claimed! +${data.xpAwarded} XP awarded to the guild.`);
-        await fetchUserProfile();
-        await refreshProgress();
-        if (routeGuildId) await fetchGuildById(routeGuildId);
+    const guildId = activeGuildDetails?.guild?.id;
+    if (!guildId || !token) return;
+    await runWithPending(`quest:${guildId}:${questId}`, async () => {
+      const result = await claimGuildQuest(token, guildId, questId);
+      if (!result.ok || !result.data?.success) {
+        if (activeGuildViewIdRef.current === guildId) {
+          showNotice(result.data?.error || result.error || 'Failed to claim quest reward.', 'error');
+        }
+        return;
       }
-    } catch (err: any) {
-      showNotice(err.message || 'Error claiming quest reward.', 'error');
-    }
+      if (activeGuildViewIdRef.current === guildId) {
+        if (Number.isFinite(result.data.xpAwarded)) {
+          showNotice(`Guild quest reward claimed! +${result.data.xpAwarded} XP awarded to the guild.`);
+        } else {
+          showNotice('Guild quest reward claimed. The server did not return an XP amount.');
+        }
+        refreshRouteDetails();
+      }
+      await fetchUserProfile();
+      await refreshProgress();
+    });
   };
 
-  // The displayed guild is either the route-specified guild or the user's active guild
-  const displayedGuild = activeGuildDetails?.guild || (userProfile?.inGuild ? userProfile.guild : null);
-  const isUserMember = userProfile?.inGuild && userProfile.guild?.id === displayedGuild?.id;
-  const userRole = isUserMember ? userProfile?.membership?.role : null;
-  const isLeader = userRole === 'leader';
-  const isOfficer = userRole === 'officer' || isLeader;
-
-  // Calculate XP fill
-  const guildTotalXp = displayedGuild?.totalXp || 0;
-  const nextRankXp = 10000;
-  const xpProgressPercent = Math.min(100, Math.round(((guildTotalXp % nextRankXp) / nextRankXp) * 100));
+  // A route detail must match the URL; /guilds shows the authenticated user's own guild.
+  const sessionProfile = isAuthenticated ? userProfile : null;
+  const routeGuildDetails = routeGuildId && guildDetailsData?.guild.id === routeGuildId ? guildDetailsData : null;
+  const activeGuildDetails = routeGuildId ? routeGuildDetails : sessionProfile?.details ?? null;
+  activeGuildViewIdRef.current = activeGuildDetails?.guild.id ?? null;
+  const displayedGuild = routeGuildId
+    ? routeGuildDetails?.guild ?? null
+    : activeGuildDetails?.guild ?? (sessionProfile?.inGuild ? sessionProfile.guild : null);
+  const permissions = activeGuildDetails?.userContext;
+  const isUserMember = permissions?.isMember === true && sessionProfile?.guild?.id === displayedGuild?.id;
+  const userRole = isUserMember ? permissions?.role : null;
+  const isLeader = isUserMember && permissions?.isLeader === true;
+  const isOfficer = isUserMember && permissions?.isOfficer === true;
 
   return (
-    <div className="guilds-page">
+    <div className="guilds-page guild-command-center">
       {/* Toast notice */}
       {actionMessage && (
-        <div
-          style={{
-            position: 'fixed',
-            top: '20px',
-            right: '24px',
-            zIndex: 9999,
-            padding: '12px 20px',
-            borderRadius: 'var(--radius-md)',
-            background: actionMessage.type === 'error' ? 'rgba(239, 68, 68, 0.95)' : 'rgba(34, 197, 94, 0.95)',
-            color: '#fff',
-            fontWeight: 600,
-            boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
-            backdropFilter: 'blur(8px)',
-            animation: 'fadeIn 0.2s ease',
-          }}
-        >
-          {actionMessage.text}
+        <div className="guild-toast-slot">
+          <Toast variant={actionMessage.type} title={actionMessage.type === 'error' ? 'Action failed' : 'Guild update'} message={actionMessage.text} />
         </div>
       )}
 
       {/* Pending Invites Banner */}
-      {userProfile?.pendingInvites && userProfile.pendingInvites.length > 0 && !userProfile.inGuild && (
-        <div className="pending-invites-panel animate-fadeInUp">
-          <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#c084fc' }}>
-            📬 Pending Guild Invitations ({userProfile.pendingInvites.length})
+      {sessionProfile?.pendingInvites && sessionProfile.pendingInvites.length > 0 && !sessionProfile.inGuild && (
+        <Panel className="pending-invites-panel guild-command-panel animate-fadeInUp">
+          <div className="guild-section-heading">
+            <div>
+              <span className="guild-eyebrow">Incoming transmissions</span>
+              <h2>Pending Invitations <span className="guild-count">{sessionProfile.pendingInvites.length}</span></h2>
+            </div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {userProfile.pendingInvites.map((inv) => (
+            {sessionProfile.pendingInvites.map((inv) => (
               <div key={inv.inviteId} className="pending-invite-card">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <span style={{ fontSize: '1.6rem' }}>{inv.guildEmblem}</span>
@@ -464,49 +517,43 @@ export default function Guilds() {
                   <button
                     className="guilds-action-btn"
                     style={{ padding: '6px 14px', fontSize: '0.8rem' }}
-                    onClick={() => handleRespondInvite(inv.guild_id, inv.inviteId, true)}
+                    disabled={pendingActions.has(`invite:${inv.inviteId}`)}
+                    onClick={() => void handleRespondInvite(inv.guild_id, inv.inviteId, true)}
                   >
-                    Accept
+                    {pendingInviteActions[inv.inviteId] === 'accept' ? 'Accepting…' : 'Accept'}
                   </button>
                   <button
                     className="guilds-secondary-btn"
                     style={{ padding: '6px 14px', fontSize: '0.8rem' }}
-                    onClick={() => handleRespondInvite(inv.guild_id, inv.inviteId, false)}
+                    disabled={pendingActions.has(`invite:${inv.inviteId}`)}
+                    onClick={() => void handleRespondInvite(inv.guild_id, inv.inviteId, false)}
                   >
-                    Decline
+                    {pendingInviteActions[inv.inviteId] === 'reject' ? 'Declining…' : 'Decline'}
                   </button>
                 </div>
               </div>
             ))}
           </div>
-        </div>
+        </Panel>
       )}
 
       {/* Main Guild Banner or Discovery View */}
       {displayedGuild ? (
-        <section className="guilds-hero animate-fadeInUp">
+        <section className="guilds-hero guild-command-hero has-guild animate-fadeInUp">
           <div className="guilds-hero-content">
             <div className="guilds-hero-top">
               <div className="guilds-hero-title-wrap">
-                <div className="guilds-hero-emblem">{displayedGuild.emblem || '🛡️'}</div>
+                <div className="guilds-hero-emblem" aria-hidden="true">{displayedGuild.emblem || '🛡️'}</div>
                 <div>
                   <h1 className="guilds-hero-title">
                     <span>{displayedGuild.name}</span>
-                    <span
-                      className="guild-rank-tag"
-                      style={{
-                        background: `${getRankColor(displayedGuild.rank)}22`,
-                        color: getRankColor(displayedGuild.rank),
-                        border: `1px solid ${getRankColor(displayedGuild.rank)}44`,
-                      }}
-                    >
-                      {displayedGuild.rank}
-                    </span>
+                    <RankBadge rank={displayedGuild.rank} className="guild-command-rank" />
                     {userRole && <span className={`guild-role-badge ${userRole}`}>{userRole}</span>}
                   </h1>
                   <div className="guilds-hero-subtitle">
-                    {displayedGuild.description || 'A fellowship of elite hunters advancing together.'}
+                    {displayedGuild.description || 'No guild description provided.'}
                   </div>
+                  {displayedGuild.leaderName && <div className="guild-leader-line">Led by <strong>{displayedGuild.leaderName}</strong>{displayedGuild.leaderRank && <> · <span>{displayedGuild.leaderRank}</span></>}</div>}
                 </div>
               </div>
 
@@ -524,15 +571,15 @@ export default function Guilds() {
                         Transfer Leadership
                       </button>
                     )}
-                    <button className="guilds-danger-btn" onClick={handleLeaveGuild}>
+                    <button className="guilds-danger-btn" onClick={handleLeaveGuild} disabled={pendingActions.has('leave')}>
                       Leave Guild
                     </button>
                   </>
                 ) : (
                   <>
-                    {!userProfile?.inGuild && (
-                      <button className="guilds-action-btn" onClick={() => handleJoinGuild(displayedGuild.id)}>
-                        Join Guild
+                    {!sessionProfile?.inGuild && (
+                      <button className="guilds-action-btn" onClick={() => void handleJoinGuild(displayedGuild.id)} disabled={pendingActions.has(`join:${displayedGuild.id}`)}>
+                        {pendingActions.has(`join:${displayedGuild.id}`) ? 'Joining…' : 'Join Guild'}
                       </button>
                     )}
                     <button className="guilds-secondary-btn" onClick={() => navigate('/guilds')}>
@@ -544,60 +591,28 @@ export default function Guilds() {
             </div>
 
             {/* Guild Stats Grid */}
-            <div className="guilds-hero-stats">
-              <div className="guild-stat-item">
-                <span className="guild-stat-label">Guild Level</span>
-                <span className="guild-stat-value">Lv. {displayedGuild.level}</span>
-              </div>
-              <div className="guild-stat-item">
-                <span className="guild-stat-label">Total Guild XP</span>
-                <span className="guild-stat-value" style={{ color: 'var(--accent-primary)' }}>
-                  {displayedGuild.totalXp.toLocaleString()} XP
-                </span>
-              </div>
-              <div className="guild-stat-item">
-                <span className="guild-stat-label">Weekly XP</span>
-                <span className="guild-stat-value" style={{ color: 'var(--color-success)' }}>
-                  +{displayedGuild.weeklyXp.toLocaleString()} XP
-                </span>
-              </div>
-              <div className="guild-stat-item">
-                <span className="guild-stat-label">Members</span>
-                <span className="guild-stat-value">
-                  {displayedGuild.memberCount} / {displayedGuild.maxMembers}
-                </span>
-              </div>
-              {isUserMember && userProfile?.membership && (
-                <div className="guild-stat-item">
-                  <span className="guild-stat-label">Your Contribution</span>
-                  <span className="guild-stat-value" style={{ color: '#c084fc' }}>
-                    {userProfile.membership.contributedXp.toLocaleString()} XP
-                  </span>
-                </div>
+            <div className="guilds-hero-stats guild-command-stats">
+              <StatCard label="Guild Level" value={`Lv. ${displayedGuild.level}`} icon={<span aria-hidden="true">◆</span>} />
+              <StatCard label="Total Contribution" value={`${displayedGuild.totalXp.toLocaleString()} XP`} icon={<span aria-hidden="true">✦</span>} />
+              <StatCard label="Weekly Contribution" value={`${displayedGuild.weeklyXp.toLocaleString()} XP`} icon={<span aria-hidden="true">↗</span>} />
+              <StatCard label="Roster" value={`${displayedGuild.memberCount} / ${displayedGuild.maxMembers}`} icon={<span aria-hidden="true">♙</span>} />
+              {isUserMember && sessionProfile?.membership && (
+                <StatCard label="Your Contribution" value={`${sessionProfile.membership.contributedXp.toLocaleString()} XP`} icon={<span aria-hidden="true">✧</span>} />
               )}
-            </div>
-
-            {/* XP Progress Bar */}
-            <div className="guild-xp-bar-container">
-              <div className="guild-xp-bar-header">
-                <span>Progression to Next Guild Tier</span>
-                <span>{xpProgressPercent}%</span>
-              </div>
-              <div className="guild-xp-bar-track">
-                <div className="guild-xp-bar-fill" style={{ width: `${xpProgressPercent}%` }} />
-              </div>
             </div>
           </div>
         </section>
       ) : (
-        <section className="guilds-hero animate-fadeInUp">
+        <section className="guilds-hero guild-command-hero guild-discovery-hero animate-fadeInUp">
           <div className="guilds-hero-content">
             <div className="guilds-hero-top">
               <div>
-                <h1 className="guilds-hero-title">Hunter Guilds & Alliances</h1>
+                <span className="guild-eyebrow">Hunter Association · command network</span>
+                <h1 className="guilds-hero-title">Guild Headquarters</h1>
                 <div className="guilds-hero-subtitle">
-                  Form fellowships with fellow hunters, embark on cooperative quests, and conquer competitive rankings.
+                  Find your unit, coordinate with fellow hunters, and take on cooperative challenges.
                 </div>
+                {user && <div className="guild-hunter-context">Current hunter <strong>{user.username}</strong></div>}
               </div>
               {isAuthenticated && (
                 <button className="guilds-action-btn" onClick={() => setShowCreateModal(true)}>
@@ -610,23 +625,26 @@ export default function Guilds() {
       )}
 
       {/* Nav Tabs */}
-      <div className="guilds-nav-tabs">
+      <div className="guilds-nav-tabs guild-command-nav" aria-label="Guild sections">
         {displayedGuild && (
           <>
             <button
               className={`guild-tab-btn ${activeTab === 'members' ? 'active' : ''}`}
+              aria-pressed={activeTab === 'members'}
               onClick={() => setActiveTab('members')}
             >
               👥 Member Roster ({activeGuildDetails?.members?.length || displayedGuild.memberCount})
             </button>
             <button
               className={`guild-tab-btn ${activeTab === 'quests' ? 'active' : ''}`}
+              aria-pressed={activeTab === 'quests'}
               onClick={() => setActiveTab('quests')}
             >
               ⚔️ Cooperative Quests ({activeGuildDetails?.quests?.length || 0})
             </button>
             <button
               className={`guild-tab-btn ${activeTab === 'milestones' ? 'active' : ''}`}
+              aria-pressed={activeTab === 'milestones'}
               onClick={() => setActiveTab('milestones')}
             >
               🏆 Milestones ({activeGuildDetails?.achievements?.length || 0})
@@ -635,18 +653,38 @@ export default function Guilds() {
         )}
         <button
           className={`guild-tab-btn ${activeTab === 'discovery' ? 'active' : ''}`}
-          onClick={() => {
-            setActiveTab('discovery');
-            void fetchGuildsList(1, searchQuery, rankFilter);
-          }}
+          aria-pressed={activeTab === 'discovery'}
+          onClick={() => setActiveTab('discovery')}
         >
           🔍 Discover Guilds
         </button>
       </div>
 
+      {routeGuildId && (authLoading || detailState === 'loading') && (
+        <LoadingState label={authLoading ? 'Checking session' : detailRetry > 0 || detailRefresh > 0 ? 'Retrying guild details' : 'Loading guild details'} lines={4} />
+      )}
+      {routeGuildId && detailState === 'not-found' && (
+        <EmptyState
+          title="Guild Not Found"
+          description={detailError ?? 'This guild could not be found.'}
+          action={<Button variant="secondary" onClick={() => setDetailRetry((count) => count + 1)}>Retry</Button>}
+        />
+      )}
+      {routeGuildId && detailState === 'forbidden' && (
+        <ErrorState message={detailError ?? 'You do not have access to this guild.'} onRetry={() => setDetailRetry((count) => count + 1)} retryLabel="Retry" />
+      )}
+      {routeGuildId && detailState === 'error' && (
+        <ErrorState message={detailError ?? 'Unable to load guild details.'} onRetry={() => setDetailRetry((count) => count + 1)} retryLabel="Retry" />
+      )}
+
       {/* Tab: Members */}
       {activeTab === 'members' && activeGuildDetails && (
-        <div className="guild-members-wrap animate-fadeInUp">
+        <Panel as="div" className="guild-members-wrap guild-command-panel animate-fadeInUp">
+          <div className="guild-roster-heading">
+            <div><span className="guild-eyebrow">Unit roster</span><h2>Guild Members</h2></div>
+            <span className="guild-count">{activeGuildDetails.members.length} hunters</span>
+          </div>
+          <div className="guild-roster-scroll" role="region" aria-label="Guild member roster" tabIndex={0}>
           <table className="guild-members-table">
             <thead>
               <tr>
@@ -672,7 +710,7 @@ export default function Guilds() {
                         <div>
                           <div className="member-name">
                             {m.name}
-                            {m.userId === userProfile?.membership?.joinedAt && (
+                            {m.userId === user?.id && (
                               <span style={{ fontSize: '0.7rem', color: '#a855f7' }}> (YOU)</span>
                             )}
                           </div>
@@ -707,7 +745,8 @@ export default function Guilds() {
                             <button
                               className="icon-btn"
                               title="Promote to Officer"
-                              onClick={() => handleRoleChange(m.userId, 'officer')}
+                              disabled={pendingActions.has(`role:${m.userId}`)}
+                              onClick={() => handleRoleChange(m.userId, 'officer', m.name)}
                             >
                               ⬆ Officer
                             </button>
@@ -716,7 +755,8 @@ export default function Guilds() {
                             <button
                               className="icon-btn"
                               title="Demote to Member"
-                              onClick={() => handleRoleChange(m.userId, 'member')}
+                              disabled={pendingActions.has(`role:${m.userId}`)}
+                              onClick={() => handleRoleChange(m.userId, 'member', m.name)}
                             >
                               ⬇ Member
                             </button>
@@ -725,6 +765,7 @@ export default function Guilds() {
                             <button
                               className="icon-btn danger"
                               title="Kick from guild"
+                              disabled={pendingActions.has(`kick:${m.userId}`)}
                               onClick={() => handleKickMember(m.userId, m.name)}
                             >
                               ✕ Kick
@@ -738,17 +779,27 @@ export default function Guilds() {
               })}
             </tbody>
           </table>
-        </div>
+          </div>
+        </Panel>
       )}
 
       {/* Tab: Cooperative Guild Quests */}
       {activeTab === 'quests' && activeGuildDetails && (
-        <div className="guild-quests-grid animate-fadeInUp">
+        <section className="guild-section animate-fadeInUp" aria-labelledby="guild-quests-heading">
+          <div className="guild-section-heading">
+            <div><span className="guild-eyebrow">Shared objectives</span><h2 id="guild-quests-heading">Cooperative Quests</h2></div>
+          </div>
+          <div className="guild-quests-grid">
           {activeGuildDetails.quests.map((q) => {
-            const isCompleted = q.status === 'completed' || q.currentValue >= q.targetValue;
-            const isClaimed = q.status === 'claimed';
+            const rawStatus: string = q.status;
+            const isCompleted = rawStatus === 'completed';
+            const isClaimed = rawStatus === 'claimed';
+            const isInProgress = rawStatus === 'in-progress';
+            const statusLabel = isInProgress || isCompleted || isClaimed ? rawStatus.replace('-', ' ') : 'status unavailable';
+            const badgeStatus = isInProgress ? 'active' : isCompleted ? 'completed' : 'pending';
+            const claimPendingKey = `quest:${activeGuildDetails.guild.id}:${q.id}`;
             return (
-              <div
+              <Panel as="article"
                 key={q.id}
                 className={`guild-quest-card ${isCompleted ? 'completed' : ''} ${isClaimed ? 'claimed' : ''}`}
               >
@@ -757,31 +808,23 @@ export default function Guilds() {
                     <div className="guild-quest-title">{q.title}</div>
                     <div className="guild-quest-desc">{q.description}</div>
                   </div>
-                  <span
-                    className="guild-rank-tag"
-                    style={{
-                      background: isClaimed
-                        ? 'rgba(255,255,255,0.06)'
-                        : isCompleted
-                        ? 'rgba(34, 197, 94, 0.2)'
-                        : 'rgba(59, 130, 246, 0.15)',
-                      color: isClaimed ? 'var(--text-muted)' : isCompleted ? '#22c55e' : '#60a5fa',
-                    }}
-                  >
-                    {isClaimed ? 'Claimed' : isCompleted ? 'Ready to Claim' : 'In Progress'}
-                  </span>
+                  <StatusBadge status={badgeStatus}>{statusLabel}</StatusBadge>
                 </div>
 
                 <div className="guild-quest-progress-wrap">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
+                  <div className="guild-quest-progress-labels">
                     <span style={{ color: 'var(--text-muted)' }}>Guild Objective</span>
                     <span style={{ fontWeight: 600 }}>
                       {q.currentValue.toLocaleString()} / {q.targetValue.toLocaleString()} ({q.progressPercent}%)
                     </span>
                   </div>
-                  <div className="guild-quest-progress-track">
-                    <div className="guild-quest-progress-fill" style={{ width: `${q.progressPercent}%` }} />
-                  </div>
+                  <ProgressBar value={q.progressPercent} label={`${q.title} progress`} variant="cyan" />
+                  {isInProgress && (
+                    <p className="guild-quest-claim-note">Claim availability is not included in this status. The server must confirm eligibility.</p>
+                  )}
+                  {isCompleted && q.completedAt && (
+                    <p className="guild-quest-claim-note">Completed {new Date(q.completedAt).toLocaleDateString()}</p>
+                  )}
                 </div>
 
                 <div className="guild-quest-footer">
@@ -794,27 +837,38 @@ export default function Guilds() {
                     )}
                   </div>
 
-                  {isCompleted && !isClaimed && isUserMember && (
-                    <button className="guilds-action-btn" onClick={() => handleClaimQuest(q.id)}>
-                      Claim Reward
+                  {isCompleted && isUserMember && (
+                      <button className="guilds-action-btn" onClick={() => void handleClaimQuest(q.id)} disabled={pendingActions.has(claimPendingKey)}>
+                      {pendingActions.has(claimPendingKey) ? 'Claiming…' : 'Claim Reward'}
                     </button>
                   )}
-                  {isClaimed && <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>✓ Claimed</span>}
+                  {isClaimed && (
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                      ✓ Claimed{q.claimedAt ? ` ${new Date(q.claimedAt).toLocaleDateString()}` : ''}
+                    </span>
+                  )}
                 </div>
-              </div>
+              </Panel>
             );
           })}
-        </div>
+          {activeGuildDetails.quests.length === 0 && <EmptyState title="No Cooperative Quests" description="There are no quest records available for this guild." />}
+          </div>
+        </section>
       )}
 
       {/* Tab: Milestones */}
       {activeTab === 'milestones' && activeGuildDetails && (
-        <div className="guild-quests-grid animate-fadeInUp">
+        <section className="guild-section animate-fadeInUp" aria-labelledby="guild-achievements-heading">
+          <div className="guild-section-heading">
+            <div><span className="guild-eyebrow">Guild record</span><h2 id="guild-achievements-heading">Unlocked Achievements</h2></div>
+            <span className="guild-count">{activeGuildDetails.achievements.length}</span>
+          </div>
+          <div className="guild-quests-grid">
           {activeGuildDetails.achievements.map((a) => (
-            <div key={a.id} className="guild-quest-card completed">
+            <Panel as="article" key={a.id} className="guild-quest-card completed guild-achievement-card">
               <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
                 <span style={{ fontSize: '2rem' }}>{a.icon}</span>
-                <div>
+                <div className="guild-achievement-copy">
                   <div className="guild-quest-title">{a.name}</div>
                   <div className="guild-quest-desc">{a.description}</div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
@@ -822,25 +876,26 @@ export default function Guilds() {
                   </div>
                 </div>
               </div>
-            </div>
+            </Panel>
           ))}
           {activeGuildDetails.achievements.length === 0 && (
             <div className="guild-empty-state" style={{ gridColumn: '1 / -1' }}>
               <div className="guild-empty-icon">🏆</div>
-              <div className="guild-empty-title">No Milestones Unlocked Yet</div>
+              <div className="guild-empty-title">No Achievements Unlocked Yet</div>
               <div className="guild-empty-desc">
-                Complete quests, clear programming dungeons, and recruit hunters to unlock prestigious guild milestones.
+                Unlocked guild achievements will appear here.
               </div>
             </div>
           )}
-        </div>
+          </div>
+        </section>
       )}
 
       {/* Tab: Discover Guilds */}
       {activeTab === 'discovery' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div className="guild-discovery-content">
           {/* Toolbar */}
-          <div className="guilds-toolbar">
+          <div className="guilds-toolbar guild-discovery-toolbar">
             <div className="guilds-search-box">
               <span>🔍</span>
               <input
@@ -850,18 +905,18 @@ export default function Guilds() {
                 value={searchQuery}
                 onChange={(e) => {
                   setSearchQuery(e.target.value);
-                  void fetchGuildsList(1, e.target.value, rankFilter);
+                  setCurrentPage(1);
                 }}
               />
             </div>
 
-            <div style={{ display: 'flex', gap: '10px' }}>
+            <div className="guild-filter-actions">
               <select
                 className="guilds-filter-select"
                 value={rankFilter}
                 onChange={(e) => {
                   setRankFilter(e.target.value);
-                  void fetchGuildsList(1, searchQuery, e.target.value);
+                  setCurrentPage(1);
                 }}
               >
                 <option value="all">All Ranks</option>
@@ -875,7 +930,7 @@ export default function Guilds() {
                 <option value="Monarch">Monarch</option>
               </select>
 
-              {isAuthenticated && !userProfile?.inGuild && (
+              {isAuthenticated && !sessionProfile?.inGuild && (
                 <button className="guilds-action-btn" onClick={() => setShowCreateModal(true)}>
                   <span>+</span> Create Guild
                 </button>
@@ -883,39 +938,48 @@ export default function Guilds() {
             </div>
           </div>
 
+          {(normalizedSearchQuery || rankFilter !== 'all') && (
+            <div className="guild-active-filters" aria-live="polite">
+              <span className="guild-eyebrow">Active filters</span>
+              {normalizedSearchQuery && <span className="guild-filter-chip">Name: “{normalizedSearchQuery}”</span>}
+              {rankFilter !== 'all' && <span className="guild-filter-chip">Rank: {rankFilter}</span>}
+              <Button variant="ghost" size="sm" onClick={() => { setSearchQuery(''); setRankFilter('all'); setCurrentPage(1); }}>Clear filters</Button>
+            </div>
+          )}
+          {discoveryHasLoaded && !discoveryError && totalGuilds !== null && (
+            <div className="guild-discovery-result-count" aria-live="polite">{totalGuilds} {totalGuilds === 1 ? 'guild' : 'guilds'} found</div>
+          )}
+
           {/* Guilds Grid */}
+          {discoveryError && discoveryList.length > 0 && (
+            <ErrorState message={discoveryError} onRetry={() => setDiscoveryRetry((count) => count + 1)} retryLabel={discoveryLoading ? 'Retrying…' : 'Retry'} />
+          )}
+          {discoveryLoading && discoveryList.length === 0 && <LoadingState label={discoveryHasLoaded ? 'Retrying guild search' : 'Loading guilds'} lines={4} />}
+          {discoveryHasLoaded && discoveryError && discoveryList.length === 0 && (
+            <ErrorState message={discoveryError} onRetry={() => setDiscoveryRetry((count) => count + 1)} retryLabel={discoveryLoading ? 'Retrying…' : 'Retry'} />
+          )}
           <div className="guilds-grid animate-fadeInUp">
             {discoveryList.map((g) => (
-              <div key={g.id} className="guild-card">
+              <Panel as="article" key={g.id} className="guild-card guild-command-card">
                 <div className="guild-card-top">
-                  <div className="guild-card-emblem">{g.emblem || '🛡️'}</div>
+                  <div className="guild-card-emblem" aria-hidden="true">{g.emblem || '🛡️'}</div>
                   <div className="guild-card-info">
-                    <div className="guild-card-name">{g.name}</div>
+                    <h2 className="guild-card-name">{g.name}</h2>
                     <div className="guild-card-meta">
-                      <span
-                        className="guild-rank-tag"
-                        style={{
-                          background: `${getRankColor(g.rank)}18`,
-                          color: getRankColor(g.rank),
-                        }}
-                      >
-                        {g.rank}
-                      </span>
+                      <RankBadge rank={g.rank} />
                       <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Lv. {g.level}</span>
                     </div>
                   </div>
                 </div>
 
-                <div className="guild-card-desc">{g.description || 'A gathering of powerful hunters.'}</div>
+                <div className="guild-card-desc">{g.description || 'No description provided.'}</div>
+                {g.leaderName && <div className="guild-card-leader">Leader <strong>{g.leaderName}</strong>{g.leaderRank && <span>{g.leaderRank}</span>}</div>}
 
                 <div className="guild-card-stats">
-                  <span>
-                    👥 {g.memberCount}/{g.maxMembers} Members
-                  </span>
-                  <span style={{ color: 'var(--accent-primary)', fontWeight: 600 }}>
-                    ⚡ {g.totalXp.toLocaleString()} XP
-                  </span>
+                  <span>♙ {g.memberCount}/{g.maxMembers} Members</span>
+                  <span>✦ {g.totalXp.toLocaleString()} Total XP</span>
                 </div>
+                <div className="guild-card-weekly">Weekly contribution <strong>{g.weeklyXp.toLocaleString()} XP</strong></div>
 
                 <div className="guild-card-actions">
                   <button
@@ -923,59 +987,52 @@ export default function Guilds() {
                     style={{ flex: 1 }}
                     onClick={() => {
                       navigate(`/guilds/${g.id}`);
-                      void fetchGuildById(g.id);
                     }}
                   >
                     View Guild
                   </button>
-                  {!userProfile?.inGuild && (
+                  {!sessionProfile?.inGuild && (
                     <button
                       className="guilds-action-btn"
                       style={{ flex: 1 }}
-                      disabled={g.memberCount >= g.maxMembers}
-                      onClick={() => handleJoinGuild(g.id)}
+                      disabled={g.memberCount >= g.maxMembers || pendingActions.has(`join:${g.id}`)}
+                      onClick={() => void handleJoinGuild(g.id)}
                     >
-                      {g.memberCount >= g.maxMembers ? 'Full' : 'Join'}
+                      {g.memberCount >= g.maxMembers ? 'Full' : pendingActions.has(`join:${g.id}`) ? 'Joining…' : 'Join'}
                     </button>
                   )}
                 </div>
-              </div>
+              </Panel>
             ))}
           </div>
 
           {/* Empty state */}
-          {discoveryList.length === 0 && (
-            <div className="guild-empty-state">
-              <div className="guild-empty-icon">🛡️</div>
-              <div className="guild-empty-title">No Guilds Found</div>
-              <div className="guild-empty-desc">
-                {searchQuery ? `No guilds matching "${searchQuery}".` : 'Be the first hunter to establish a guild!'}
-              </div>
-              {isAuthenticated && !userProfile?.inGuild && (
-                <button className="guilds-action-btn" style={{ marginTop: '8px' }} onClick={() => setShowCreateModal(true)}>
-                  Create a Guild Now
-                </button>
-              )}
-            </div>
+          {discoveryHasLoaded && !discoveryError && discoveryList.length === 0 && (
+            <EmptyState
+              icon={<span aria-hidden="true">🛡️</span>}
+              title={normalizedSearchQuery || rankFilter !== 'all' ? 'No Matching Guilds' : 'No Guilds Available'}
+              description={normalizedSearchQuery || rankFilter !== 'all' ? 'Try changing the search or rank filter.' : 'There are no guild records to display right now.'}
+              action={isAuthenticated && !sessionProfile?.inGuild ? <Button onClick={() => setShowCreateModal(true)}>Create a Guild Now</Button> : undefined}
+            />
           )}
 
           {/* Pagination */}
-          {totalPages > 1 && (
+          {discoveryHasLoaded && !discoveryError && totalPages !== null && totalPages > 1 && (
             <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginTop: '16px' }}>
               <button
                 className="guilds-secondary-btn"
-                disabled={currentPage <= 1}
-                onClick={() => void fetchGuildsList(currentPage - 1, searchQuery, rankFilter)}
+                disabled={discoveryLoading || currentPage <= 1}
+                onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
               >
                 Previous
               </button>
               <span style={{ display: 'flex', alignItems: 'center', padding: '0 12px', color: 'var(--text-secondary)' }}>
-                Page {currentPage} of {totalPages}
+                Page {currentPage} of {totalPages}{totalGuilds !== null ? ` · ${totalGuilds} guilds` : ''}
               </span>
               <button
                 className="guilds-secondary-btn"
-                disabled={currentPage >= totalPages}
-                onClick={() => void fetchGuildsList(currentPage + 1, searchQuery, rankFilter)}
+                disabled={discoveryLoading || currentPage >= totalPages}
+                onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
               >
                 Next
               </button>
@@ -985,17 +1042,14 @@ export default function Guilds() {
       )}
 
       {/* Modal: Create Guild */}
-      {showCreateModal && (
-        <div className="guild-modal-overlay" onClick={() => setShowCreateModal(false)}>
-          <div className="guild-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="guild-modal-header">
-              <h2 className="guild-modal-title">Establish Hunter Guild</h2>
-              <button className="icon-btn" onClick={() => setShowCreateModal(false)}>
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateGuild} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <Modal
+        open={showCreateModal}
+        title="Establish Hunter Guild"
+        description="Create a guild using the name and emblem that will identify it to other hunters."
+        onClose={() => { if (!pendingActions.has('create')) setShowCreateModal(false); }}
+        className="guild-modal"
+      >
+            <form onSubmit={handleCreateGuild} className="guild-management-form">
               <div className="guild-form-group">
                 <label className="guild-form-label">Guild Emblem</label>
                 <div className="emblem-picker">
@@ -1004,6 +1058,8 @@ export default function Guilds() {
                       key={emb}
                       type="button"
                       className={`emblem-option ${newGuildEmblem === emb ? 'selected' : ''}`}
+                      aria-label={`Select ${emb} emblem`}
+                      aria-pressed={newGuildEmblem === emb}
                       onClick={() => setNewGuildEmblem(emb)}
                     >
                       {emb}
@@ -1013,58 +1069,73 @@ export default function Guilds() {
               </div>
 
               <div className="guild-form-group">
-                <label className="guild-form-label">Guild Name (3 - 30 characters)</label>
+                <label className="guild-form-label" htmlFor="guild-create-name">Guild Name (3–30 characters)</label>
                 <input
+                  id="guild-create-name"
                   type="text"
                   className="guild-form-input"
                   placeholder="e.g. Shadow Monarchs"
+                  minLength={3}
                   maxLength={30}
+                  pattern="[a-zA-Z0-9 _-]+"
                   required
                   value={newGuildName}
-                  onChange={(e) => setNewGuildName(e.target.value)}
+                  aria-invalid={Boolean(guildNameError)}
+                  aria-describedby={guildNameError ? 'guild-create-name-error' : 'guild-create-name-help'}
+                  onChange={(e) => {
+                    const value = e.target.value.trim();
+                    setNewGuildName(e.target.value);
+                    setGuildNameError(!value
+                      ? null
+                      : value.length < 3 || value.length > 30
+                        ? 'Guild name must be between 3 and 30 characters.'
+                        : !/^[a-zA-Z0-9 _-]+$/.test(value)
+                          ? 'Use letters, numbers, spaces, underscores, or hyphens.'
+                          : null);
+                  }}
                 />
+                {guildNameError
+                  ? <span className="guild-field-error" id="guild-create-name-error" role="alert">{guildNameError}</span>
+                  : <span className="guild-field-help" id="guild-create-name-help">Letters, numbers, spaces, underscores, and hyphens.</span>}
               </div>
 
               <div className="guild-form-group">
-                <label className="guild-form-label">Description & Manifesto</label>
+                <label className="guild-form-label" htmlFor="guild-create-description">Description</label>
                 <textarea
+                  id="guild-create-description"
                   className="guild-form-textarea"
                   rows={3}
                   placeholder="Describe your guild's mission, goals, and culture..."
-                  maxLength={250}
+                  maxLength={300}
                   value={newGuildDesc}
                   onChange={(e) => setNewGuildDesc(e.target.value)}
                 />
               </div>
 
               <div className="guild-modal-actions">
-                <button type="button" className="guilds-secondary-btn" onClick={() => setShowCreateModal(false)}>
+                <button type="button" className="guilds-secondary-btn" onClick={() => setShowCreateModal(false)} disabled={pendingActions.has('create')}>
                   Cancel
                 </button>
-                <button type="submit" className="guilds-action-btn" disabled={isSubmitting}>
-                  {isSubmitting ? 'Establishing...' : 'Create Guild'}
+                <button type="submit" className="guilds-action-btn" disabled={pendingActions.has('create')}>
+                  {pendingActions.has('create') ? 'Establishing…' : 'Create Guild'}
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {/* Modal: Invite Hunter */}
-      {showInviteModal && (
-        <div className="guild-modal-overlay" onClick={() => setShowInviteModal(false)}>
-          <div className="guild-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="guild-modal-header">
-              <h2 className="guild-modal-title">Invite Hunter</h2>
-              <button className="icon-btn" onClick={() => setShowInviteModal(false)}>
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleSendInvite} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <Modal
+        open={showInviteModal}
+        title="Invite Hunter"
+        description="Invite a hunter by their exact username. The server checks whether the invitation is allowed."
+        onClose={() => { if (!pendingActions.has('invite-send')) setShowInviteModal(false); }}
+        className="guild-modal"
+      >
+            <form onSubmit={handleSendInvite} className="guild-management-form">
               <div className="guild-form-group">
-                <label className="guild-form-label">Hunter Username</label>
+                <label className="guild-form-label" htmlFor="guild-invite-username">Hunter Username</label>
                 <input
+                  id="guild-invite-username"
                   type="text"
                   className="guild-form-input"
                   placeholder="Enter exact hunter username"
@@ -1075,33 +1146,29 @@ export default function Guilds() {
               </div>
 
               <div className="guild-modal-actions">
-                <button type="button" className="guilds-secondary-btn" onClick={() => setShowInviteModal(false)}>
+                <button type="button" className="guilds-secondary-btn" onClick={() => setShowInviteModal(false)} disabled={pendingActions.has('invite-send')}>
                   Cancel
                 </button>
-                <button type="submit" className="guilds-action-btn" disabled={isSubmitting}>
-                  {isSubmitting ? 'Dispatching...' : 'Send Invitation'}
+                <button type="submit" className="guilds-action-btn" disabled={pendingActions.has('invite-send')}>
+                  {pendingActions.has('invite-send') ? 'Dispatching…' : 'Send Invitation'}
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {/* Modal: Transfer Leadership */}
-      {showTransferModal && activeGuildDetails && (
-        <div className="guild-modal-overlay" onClick={() => setShowTransferModal(false)}>
-          <div className="guild-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="guild-modal-header">
-              <h2 className="guild-modal-title">Transfer Guild Leadership</h2>
-              <button className="icon-btn" onClick={() => setShowTransferModal(false)}>
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleTransferLeadership} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <Modal
+        open={showTransferModal && Boolean(activeGuildDetails)}
+        title="Transfer Guild Leadership"
+        description="Leadership can only be transferred by the current leader to another current guild member."
+        onClose={() => setShowTransferModal(false)}
+        className="guild-modal"
+      >
+            {activeGuildDetails && <form onSubmit={handleTransferLeadership} className="guild-management-form">
               <div className="guild-form-group">
-                <label className="guild-form-label">Select Successor</label>
+                <label className="guild-form-label" htmlFor="guild-successor">Select Successor</label>
                 <select
+                  id="guild-successor"
                   className="guild-form-input"
                   required
                   value={targetMemberForTransfer}
@@ -1125,15 +1192,50 @@ export default function Guilds() {
                 <button
                   type="submit"
                   className="guilds-danger-btn"
-                  disabled={isSubmitting || !targetMemberForTransfer}
+                  disabled={!targetMemberForTransfer}
                 >
-                  {isSubmitting ? 'Transferring...' : 'Confirm Transfer'}
+                  Continue to Confirmation
                 </button>
               </div>
-            </form>
-          </div>
+            </form>}
+      </Modal>
+
+      <Modal
+        open={confirmation !== null}
+        title={confirmation?.title ?? 'Confirm Guild Action'}
+        description={confirmation?.description}
+        onClose={() => {
+          if (confirmation && !pendingActions.has(confirmation.pendingKey)) {
+            const reopenTransfer = confirmation.reopenTransfer;
+            setConfirmation(null);
+            if (reopenTransfer) setShowTransferModal(true);
+          }
+        }}
+        className="guild-confirm-modal"
+      >
+        <div className="guild-modal-actions">
+          <button
+            type="button"
+            className="guilds-secondary-btn"
+            disabled={Boolean(confirmation && pendingActions.has(confirmation.pendingKey))}
+            onClick={() => {
+              const reopenTransfer = confirmation?.reopenTransfer;
+              setConfirmation(null);
+              if (reopenTransfer) setShowTransferModal(true);
+            }}
+          >Cancel</button>
+          <button
+            type="button"
+            className="guilds-danger-btn"
+            disabled={!confirmation || pendingActions.has(confirmation.pendingKey)}
+            onClick={() => {
+              if (confirmation) void runWithPending(confirmation.pendingKey, confirmation.onConfirm);
+            }}
+          >
+            {confirmation && pendingActions.has(confirmation.pendingKey) ? 'Working…' : confirmation?.confirmLabel ?? 'Confirm'}
+          </button>
         </div>
-      )}
+      </Modal>
     </div>
   );
 }
