@@ -63,6 +63,10 @@ export default function Spectator() {
         clearInterval(pollTimerRef.current);
         pollTimerRef.current = null;
       }
+      if (tickTimerRef.current) {
+        clearInterval(tickTimerRef.current);
+        tickTimerRef.current = null;
+      }
     }
   }, [match]);
 
@@ -86,8 +90,8 @@ export default function Spectator() {
       <div className="spectator-page">
         <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-muted)' }}>
           <div style={{ fontSize: '2.5rem', marginBottom: '12px' }}>📡</div>
-          <h2 style={{ color: 'var(--text-primary)' }}>Tuning into Duel Broadcast…</h2>
-          <p>Connecting to Shadow Code live spectator stream.</p>
+          <h2 style={{ color: 'var(--text-primary)' }}>Loading match details…</h2>
+          <p>Connecting to the sanitized live match status feed.</p>
         </div>
       </div>
     );
@@ -109,6 +113,12 @@ export default function Spectator() {
   }
 
   const isCompleted = ['completed', 'cancelled', 'expired', 'abandoned'].includes(match.status);
+  const terminalResult = match.winnerId === 'draw' ? 'Draw'
+    : match.winnerId ? `Winner: ${match.winnerName || (match.winnerId === match.player1.id ? match.player1.name : match.player2.name)}`
+      : match.status === 'cancelled' ? 'Cancelled without a scored result'
+        : match.status === 'expired' ? 'Expired without a scored result'
+          : match.status === 'abandoned' ? 'Abandoned without a confirmed winner'
+            : 'Result unavailable';
   const isUrgent = remainingSec < 120 && !isCompleted;
   const isP1Winner = match.winnerId === match.player1.id;
   const isP2Winner = match.winnerId === match.player2.id;
@@ -129,20 +139,18 @@ export default function Spectator() {
           )}
 
           <div className="spectator-broadcast-pill">
-            <span className="live-dot" />
-            <span>{isCompleted ? 'Broadcast Ended' : 'Live Observer Feed'}</span>
+            {!isCompleted && <span className="live-dot" />}
+            <span>{isCompleted ? 'Match Details' : 'Live Match Status'}</span>
           </div>
         </div>
       </div>
 
       {/* Match Conclusion Banner */}
       {isCompleted && (
-        <div className="spectator-conclusion-banner">
+        <div className="spectator-conclusion-banner" role="status" aria-live="polite">
           <span>🏆</span>
           <span>
-            {match.winnerId === 'draw'
-              ? 'Match Concluded — Result: Draw'
-              : `Match Concluded — Winner: ${match.winnerName || 'Winner'}!`}
+            {`Match Concluded — ${terminalResult}`}
           </span>
         </div>
       )}
@@ -277,7 +285,7 @@ export default function Spectator() {
             <ul style={{ paddingLeft: '18px', color: 'var(--text-muted)', fontSize: '0.8rem', lineHeight: '1.7', margin: 0 }}>
               <li>Live test pass counters update on submission.</li>
               <li>Match timer counts down to submission deadline.</li>
-              <li>Auto-syncs every 3 seconds with the judge node.</li>
+              <li>Sanitized match details refresh every 3 seconds while active.</li>
             </ul>
           </div>
         </div>

@@ -377,3 +377,42 @@
   align-items: center;
   gap: 8px;
 }
+
+.spectator-page :is(button, a, select, textarea, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: 3px;
+}
+
+@media (max-width: 600px) {
+  .spectator-header {
+    align-items: flex-start;
+    padding: 14px;
+  }
+
+  .spectator-combatant,
+  .spectator-combatant.p2 {
+    min-width: 0;
+    flex-direction: row;
+    text-align: left;
+    padding: 12px;
+  }
+
+  .spectator-stat-badges {
+    flex-wrap: wrap;
+  }
+
+  .spectator-test-val {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spectator-page *,
+  .spectator-page *::before,
+  .spectator-page *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

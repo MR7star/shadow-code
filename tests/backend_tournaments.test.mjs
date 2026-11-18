@@ -263,6 +263,18 @@ async function main() {
     const concludedArena = await get(`/arena/matches/${arenaMatchId}/result`, tokenMap[normalMatch.p1Id]);
     assert.equal(concludedArena.status, 200);
     assert.equal(concludedArena.data.status, 'completed');
+    assert.equal(concludedArena.data.matchType, 'tournament');
+    assert.equal(concludedArena.data.player1.attemptsCount, 1);
+    assert.equal(concludedArena.data.player2.attemptsCount, 1);
+    const tournamentWinnerId = concludedArena.data.winnerId;
+    const tournamentLoserId = tournamentWinnerId === normalMatch.p1Id ? normalMatch.p2Id : normalMatch.p1Id;
+    const tournamentWinnerResult = await get(`/arena/matches/${arenaMatchId}/result`, tokenMap[tournamentWinnerId]);
+    const tournamentLoserResult = await get(`/arena/matches/${arenaMatchId}/result`, tokenMap[tournamentLoserId]);
+    assert.equal(tournamentWinnerResult.data.result, 'win');
+    assert.equal(tournamentWinnerResult.data.rewards.hunterXp, 150);
+    assert.equal(tournamentWinnerResult.data.rewards.seasonXp, 200);
+    assert.equal(tournamentLoserResult.data.rewards.hunterXp, 0);
+    assert.equal(tournamentLoserResult.data.rewards.seasonXp, 50);
 
     // VERIFY ELO ISOLATION: Normal Ranked Arena ratings must be COMPLETELY UNCHANGED
     const p1StatsAfter = await get('/arena/stats', tokenMap[normalMatch.p1Id]);

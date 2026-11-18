@@ -3165,3 +3165,84 @@
   color: #fff;
   transform: translateY(-1px);
 }
+
+/* Arena interaction and adaptive-surface polish */
+.arena-page :is(button, a, select, textarea, input, [tabindex]):focus-visible,
+.spectator-page :is(button, a, select, textarea, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-cyan) 18%, transparent);
+}
+
+.arena-player-card,
+.arena-panel,
+.arena-mm-card,
+.arena-matchmaking-card {
+  background-image: linear-gradient(145deg, color-mix(in srgb, var(--bg-surface) 96%, white 4%), var(--bg-surface));
+}
+
+.arena-panel-header {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.arena-match-row,
+.arena-stat-card,
+.arena-nav-item,
+.arena-btn {
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.arena-match-type-label {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 600px) {
+  .arena-active-status-bar {
+    flex-wrap: wrap;
+    padding: 12px;
+  }
+
+  .arena-match-row {
+    min-width: 0;
+  }
+
+  .arena-match-info,
+  .arena-match-primary,
+  .arena-match-secondary {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .arena-match-vs,
+  .arena-match-type-label {
+    overflow-wrap: anywhere;
+  }
+
+  .arena-result-card {
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+    padding: 20px 14px;
+  }
+
+  .arena-result-card-actions .arena-btn {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arena-page *,
+  .arena-page *::before,
+  .arena-page *::after,
+  .spectator-page *,
+  .spectator-page *::before,
+  .spectator-page *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

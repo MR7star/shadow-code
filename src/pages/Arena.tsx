@@ -150,8 +150,9 @@ export default function Arena() {
           setMmState({ status: 'ready', match: res.data });
           setSection('find-match');
         } else {
-          setError(res.error || 'Match not found or access denied.');
-          setMmState({ status: 'error', message: res.error || 'Match not found.', canRetry: true });
+          const message = res.error || 'Match details could not be loaded.';
+          setError(message);
+          setMmState({ status: 'matched', matchId: urlMatchId, matchDetails: null });
         }
         return;
       }
@@ -168,6 +169,8 @@ export default function Arena() {
           if (!mounted) return;
           if (matchRes.ok && matchRes.data) {
             setMmState({ status: 'ready', match: matchRes.data });
+          } else {
+            setMmState({ status: 'matched', matchId: qStatus.matchId, matchDetails: null });
           }
         } else if (qStatus.inQueue && qStatus.queuedAt) {
           // Restore queued state
@@ -180,6 +183,12 @@ export default function Arena() {
         } else {
           setMmState({ status: 'idle' });
         }
+      } else {
+        setMmState({
+          status: 'error',
+          message: statusRes.error || 'Could not restore your matchmaking status.',
+          canRetry: true,
+        });
       }
     }
 
@@ -387,17 +396,17 @@ function OverviewSection({
     <div className="arena-overview">
       {/* Quick Action Banner if active queue / match */}
       {mmState.status === 'queued' && (
-        <div className="arena-active-status-bar queued" onClick={onFindMatchClick}>
+        <div className="arena-active-status-bar queued">
           <div className="arena-active-pulse" />
           <span>You are searching for a ranked match ({formatElapsed(mmState.elapsedSeconds)} elapsed)</span>
-          <button type="button" className="arena-btn arena-btn-small">View Queue →</button>
+          <button type="button" className="arena-btn arena-btn-small" onClick={onFindMatchClick}>View Queue →</button>
         </div>
       )}
       {mmState.status === 'ready' && (
-        <div className="arena-active-status-bar ready" onClick={onFindMatchClick}>
+        <div className="arena-active-status-bar ready">
           <span className="arena-status-icon">⚔️</span>
           <span>Match in progress: #{mmState.match.id.slice(0, 12)}</span>
-          <button type="button" className="arena-btn arena-btn-small arena-btn-primary">Return to Match →</button>
+          <button type="button" className="arena-btn arena-btn-small arena-btn-primary" onClick={onFindMatchClick}>Return to Match →</button>
         </div>
       )}
 
@@ -595,10 +604,10 @@ function ArenaMatchWorkspace({
   }, [opponent.status]);
 
   // Attempts tracking
-  const [attemptsCount, setAttemptsCount] = useState<number>(() => {
-    if (you.status === 'completed' || you.status === 'submitted') return 1;
-    return 0;
-  });
+  const [attemptsCount, setAttemptsCount] = useState<number>(you.attemptsCount);
+  useEffect(() => {
+    setAttemptsCount(you.attemptsCount);
+  }, [you.attemptsCount]);
 
   // Test execution & submission states
   const [isRunningTests, setIsRunningTests] = useState(false);
@@ -620,6 +629,37 @@ function ArenaMatchWorkspace({
   // Match result modal state
   const [matchResult, setMatchResult] = useState<ArenaMatchDetails | null>(null);
   const [showResultOverlay, setShowResultOverlay] = useState(false);
+
+  useEffect(() => {
+    if (!showForfeitConfirm && !showCancelConfirm) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const firstButton = document.querySelector<HTMLButtonElement>('.arena-modal-card button');
+    firstButton?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !isForfeiting && !isCancelling) {
+        setShowForfeitConfirm(false);
+        setShowCancelConfirm(false);
+      }
+      if (event.key === 'Tab') {
+        const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('.arena-modal-card button:not(:disabled)'));
+        const first = buttons[0];
+        const last = buttons[buttons.length - 1];
+        if (!first || !last) return;
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, [showForfeitConfirm, showCancelConfirm, isForfeiting, isCancelling]);
 
   // Lock status
   const isPlayerCompleted = you.status === 'completed' || submitResult?.allPassed;
@@ -743,14 +783,14 @@ function ArenaMatchWorkspace({
     setIsSubmitting(true);
     setSubmitError(null);
     setActiveDrawerTab('submission');
-    setAttemptsCount((prev) => Math.min(5, prev + 1));
-
     try {
       const res = await submitArenaSolution(token, match.id, code);
       if (res.ok && res.data) {
         setSubmitResult(res.data);
         if (res.data.match) {
           setMatch(res.data.match);
+          const submittedPlayer = res.data.match.player1.isYou ? res.data.match.player1 : res.data.match.player2;
+          setAttemptsCount(submittedPlayer.attemptsCount);
         }
         if (
           res.data.allPassed ||
@@ -761,13 +801,15 @@ function ArenaMatchWorkspace({
         }
       } else {
         setSubmitError(res.error || 'Submission failed.');
-        if (res.error && (res.error.includes('limit') || res.error.includes('already finalized'))) {
-          setAttemptsCount(5);
-        }
       }
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Network submission error.');
     } finally {
+      const latestMatch = await fetchMatchDetails(token, match.id);
+      if (latestMatch.ok && latestMatch.data) {
+        const currentPlayer = latestMatch.data.player1.isYou ? latestMatch.data.player1 : latestMatch.data.player2;
+        setAttemptsCount(currentPlayer.attemptsCount);
+      }
       setIsSubmitting(false);
     }
   };
@@ -812,6 +854,14 @@ function ArenaMatchWorkspace({
   const divBefore = getDivision(resultRatingBefore);
   const divAfter = getDivision(resultRatingAfter);
   const hasDivisionChanged = divBefore !== divAfter;
+  const resultOutcome = matchResult?.result ?? (matchResult?.status === 'cancelled'
+    ? 'cancelled'
+    : matchResult?.status === 'expired'
+      ? 'expired'
+      : matchResult?.status === 'abandoned'
+        ? 'abandoned'
+        : 'unscored');
+  const isTournamentMatch = matchResult?.matchType === 'tournament';
 
   return (
     <div className="arena-workspace-container animate-fadeIn">
@@ -1366,11 +1416,11 @@ function ArenaMatchWorkspace({
           FORFEIT CONFIRMATION MODAL
           ══════════════════════════════════════════════════════════════ */}
       {showForfeitConfirm && (
-        <div className="arena-modal-backdrop animate-fadeIn" role="dialog" aria-modal="true">
+        <div className="arena-modal-backdrop animate-fadeIn" role="dialog" aria-modal="true" aria-labelledby="forfeit-title" aria-describedby="forfeit-description">
           <div className="arena-modal-card">
             <div className="arena-modal-icon-badge danger">⚠️</div>
-            <h3>Surrender Duel?</h3>
-            <p>
+            <h3 id="forfeit-title">Surrender Duel?</h3>
+            <p id="forfeit-description">
               Forfeiting will immediately concede victory to your opponent.
               Your competitive rating will decrease, and this duel will be permanently recorded as a defeat.
             </p>
@@ -1400,11 +1450,11 @@ function ArenaMatchWorkspace({
           CANCEL UNTOUCHED MATCH MODAL
           ══════════════════════════════════════════════════════════════ */}
       {showCancelConfirm && (
-        <div className="arena-modal-backdrop animate-fadeIn" role="dialog" aria-modal="true">
+        <div className="arena-modal-backdrop animate-fadeIn" role="dialog" aria-modal="true" aria-labelledby="cancel-match-title" aria-describedby="cancel-match-description">
           <div className="arena-modal-card">
             <div className="arena-modal-icon-badge warning">✕</div>
-            <h3>Cancel Untouched Match?</h3>
-            <p>
+            <h3 id="cancel-match-title">Cancel Untouched Match?</h3>
+            <p id="cancel-match-description">
               This duel has not started yet. Cancelling will safely close this match session
               without adjusting rating or recording a defeat.
             </p>
@@ -1443,23 +1493,27 @@ function ArenaMatchWorkspace({
           MATCH RESULT OVERLAY
           ══════════════════════════════════════════════════════════════ */}
       {showResultOverlay && matchResult && (
-        <div className="arena-result-overlay animate-fadeIn" role="dialog" aria-modal="true">
-          <div className={`arena-result-card outcome-${matchResult.result}`}>
+        <div className="arena-result-overlay animate-fadeIn" role="dialog" aria-modal="true" aria-labelledby="arena-result-title" aria-describedby="arena-result-description">
+          <div className={`arena-result-card outcome-${resultOutcome}`}>
             <div className="arena-result-card-header">
               <span className="arena-result-sysmsg">[ SYSTEM NOTIFICATION · MATCH RESOLVED ]</span>
-              <h1 className="arena-result-main-title">
-                {matchResult.result === 'win'
-                  ? 'VICTORY ACHIEVED'
-                  : matchResult.result === 'loss'
-                    ? 'DEFEAT'
-                    : 'STALEMATE · DRAW'}
+              <h1 id="arena-result-title" className="arena-result-main-title">
+                {resultOutcome === 'win' ? 'VICTORY ACHIEVED'
+                  : resultOutcome === 'loss' ? 'DEFEAT'
+                    : resultOutcome === 'draw' ? 'STALEMATE · DRAW'
+                      : resultOutcome === 'cancelled' ? 'MATCH CANCELLED'
+                        : resultOutcome === 'expired' ? 'MATCH EXPIRED · NO RESULT'
+                          : resultOutcome === 'abandoned' ? 'MATCH ABANDONED'
+                            : 'MATCH RESULT UNAVAILABLE'}
               </h1>
-              <p className="arena-result-sub-lore">
-                {matchResult.result === 'win'
-                  ? 'Your algorithm conquered the Gate trial and surpassed your opponent.'
-                  : matchResult.result === 'loss'
-                    ? 'Your mana reserves depleted before conquering the challenge.'
-                    : 'Both combatants displayed equivalent algorithmic mastery.'}
+              <p id="arena-result-description" className="arena-result-sub-lore">
+                {resultOutcome === 'win' ? (isTournamentMatch ? 'You advanced in the tournament.' : 'You won the ranked duel.')
+                  : resultOutcome === 'loss' ? (isTournamentMatch ? 'Your opponent advanced in the tournament.' : 'Your opponent won the ranked duel.')
+                    : resultOutcome === 'draw' ? 'The match ended with an officially scored draw.'
+                      : resultOutcome === 'cancelled' ? 'This match was cancelled before a scored result was recorded.'
+                        : resultOutcome === 'expired' ? 'The deadline passed without a scored result. No match rewards were awarded.'
+                          : resultOutcome === 'abandoned' ? 'The match ended without a confirmed winner.'
+                            : 'The server did not provide a scored result for this match.'}
               </p>
             </div>
 
@@ -1489,7 +1543,7 @@ function ArenaMatchWorkspace({
             {/* Rating Progression Card */}
             <div className="arena-result-rating-panel">
               <span className="arena-kicker">Rating Adjustment</span>
-              {match.matchType === 'tournament' ? (
+              {isTournamentMatch ? (
                 <div style={{ padding: '8px 0', color: 'var(--accent-cyan)', fontSize: '0.85rem', fontWeight: 600 }}>
                   🏆 Tournament Match — Normal Ranked Arena Elo is strictly isolated (0 SR adjustment).
                 </div>
@@ -1517,27 +1571,21 @@ function ArenaMatchWorkspace({
             </div>
 
             {/* Confirmed Server Rewards */}
-            <div className="arena-result-rewards-panel">
-              <span className="arena-kicker">Rewards Confirmed</span>
+            {matchResult.rewards && (matchResult.rewards.hunterXp > 0 || matchResult.rewards.seasonXp > 0) && <div className="arena-result-rewards-panel">
+              <span className="arena-kicker">Rewards Awarded</span>
               <div className="arena-result-rewards-chips">
-                {matchResult.result === 'win' && (
+                {matchResult.rewards.hunterXp > 0 && (
                   <div className="arena-res-reward-chip">
                     <span className="arena-reward-chip-icon">⚡</span>
-                    <span>+100 Hunter XP</span>
+                    <span>+{matchResult.rewards.hunterXp} Hunter XP</span>
                   </div>
                 )}
-                <div className="arena-res-reward-chip">
+                {matchResult.rewards.seasonXp > 0 && <div className="arena-res-reward-chip">
                   <span className="arena-reward-chip-icon">🏆</span>
-                  <span>
-                    {matchResult.result === 'win'
-                      ? '+150 Season XP'
-                      : matchResult.result === 'draw'
-                        ? '+80 Season XP'
-                        : '+50 Season XP'}
-                  </span>
-                </div>
+                  <span>+{matchResult.rewards.seasonXp} Season XP</span>
+                </div>}
               </div>
-            </div>
+            </div>}
 
             <div className="arena-result-card-actions">
               {match.matchType === 'tournament' ? (
@@ -1588,6 +1636,16 @@ function FindMatchSection({
   const [isJoining, setIsJoining] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
+  const [queuePollError, setQueuePollError] = useState<string | null>(null);
+  const [matchDetailsError, setMatchDetailsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (mmState.status === 'matched' && !mmState.matchDetails) {
+      setMatchDetailsError((current) => current || 'Your match is confirmed, but match details could not be loaded.');
+    } else if (mmState.status === 'matched' && mmState.matchDetails) {
+      setMatchDetailsError(null);
+    }
+  }, [mmState]);
 
   // References to keep polling clean & prevent duplicate polls
   const pollIntervalRef = useRef<number | null>(null);
@@ -1644,7 +1702,11 @@ function FindMatchSection({
     pollIntervalRef.current = window.setInterval(async () => {
       try {
         const res = await fetchQueueStatus(token);
-        if (!res.ok || !res.data) return;
+        if (!res.ok || !res.data) {
+          setQueuePollError(res.error || 'Could not refresh matchmaking status.');
+          return;
+        }
+        setQueuePollError(null);
 
         const data: QueueStatusResponse = res.data;
 
@@ -1662,6 +1724,7 @@ function FindMatchSection({
             onProfileUpdate();
           } else {
             // Still matched, but waiting for details
+            setMatchDetailsError(matchRes.error || 'Match found, but its details could not be loaded.');
             setMmState({
               status: 'matched',
               matchId: data.matchId,
@@ -1681,7 +1744,7 @@ function FindMatchSection({
           });
         }
       } catch (err) {
-        console.warn('Queue poll check error:', err);
+        setQueuePollError(err instanceof Error ? err.message : 'Network error while checking matchmaking.');
       }
     }, 2000);
 
@@ -1752,6 +1815,7 @@ function FindMatchSection({
             matchDetails: matchRes.data,
           });
         } else {
+          setMatchDetailsError(matchRes.error || 'Match found, but its details could not be loaded.');
           setMmState({
             status: 'matched',
             matchId: data.matchId,
@@ -1778,6 +1842,19 @@ function FindMatchSection({
     } finally {
       setIsJoining(false);
     }
+  };
+
+  const retryMatchDetails = async () => {
+    if (!token || mmState.status !== 'matched' || isJoining) return;
+    setIsJoining(true);
+    setMatchDetailsError(null);
+    const res = await fetchMatchDetails(token, mmState.matchId);
+    if (res.ok && res.data) {
+      setMmState({ ...mmState, matchDetails: res.data });
+    } else {
+      setMatchDetailsError(res.error || 'Match found, but its details could not be loaded.');
+    }
+    setIsJoining(false);
   };
 
   // ─── Actions: Leave Queue ────────────────────────────────────────
@@ -1867,6 +1944,7 @@ function FindMatchSection({
           </div>
 
           <div className="arena-queued-info">
+            {queuePollError && <p className="arena-alert arena-alert-error" role="alert">{queuePollError}</p>}
             <span className="arena-kicker">Matchmaking In Progress</span>
             <h2>Searching for Opponent</h2>
             <div className="arena-queued-timer">
@@ -1970,8 +2048,13 @@ function FindMatchSection({
               );
             })()
           ) : (
-            <div className="arena-loading-inline">
-              <div className="arena-spinner-sm" /> Loading confirmed opponent details…
+            <div className="arena-loading-inline" role="status">
+              {matchDetailsError ? <>
+                <span role="alert">{matchDetailsError}</span>
+                <button type="button" className="arena-btn arena-btn-secondary" onClick={() => void retryMatchDetails()} disabled={isJoining}>
+                  {isJoining ? 'Retrying…' : 'Retry match details'}
+                </button>
+              </> : <><div className="arena-spinner-sm" /> Loading confirmed opponent details…</>}
             </div>
           )}
 
@@ -2003,6 +2086,7 @@ function FindMatchSection({
             <button
               type="button"
               className="arena-btn arena-btn-primary arena-btn-enter-match"
+              disabled={!mmState.matchDetails || isJoining}
               onClick={() => {
                 stopCountdown();
                 if (mmState.matchDetails) {
@@ -2153,6 +2237,7 @@ function FindMatchSection({
 
 function HistorySection({ token }: { token: string | null }) {
   const [history, setHistory] = useState<MatchHistoryResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
 
@@ -2160,7 +2245,8 @@ function HistorySection({ token }: { token: string | null }) {
     if (!token) return;
     setLoading(true);
     const res = await fetchMatchHistory(token, p, 10);
-    if (res.ok && res.data) setHistory(res.data);
+    if (res.ok && res.data) { setHistory(res.data); setError(null); }
+    else setError(res.error || 'Unable to load match history.');
     setLoading(false);
   }, [token]);
 
@@ -2178,6 +2264,8 @@ function HistorySection({ token }: { token: string | null }) {
         <div className="arena-panel-body">
           {loading ? (
             <div className="arena-loading-inline"><div className="arena-spinner-sm" /> Loading match history…</div>
+          ) : error ? (
+            <div className="arena-empty-inline" role="alert"><p>{error}</p><button type="button" className="arena-btn arena-btn-secondary" onClick={() => void load(page)}>Retry</button></div>
           ) : !history || history.matches.length === 0 ? (
             <div className="arena-empty-inline">
               <span>📭</span>
@@ -2229,6 +2317,7 @@ function HistorySection({ token }: { token: string | null }) {
 
 function LeaderboardSection({ token }: { token: string | null }) {
   const [lb, setLb] = useState<LeaderboardResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [division, setDivision] = useState('all');
   const [loading, setLoading] = useState(true);
@@ -2237,7 +2326,8 @@ function LeaderboardSection({ token }: { token: string | null }) {
     if (!token) return;
     setLoading(true);
     const res = await fetchArenaLeaderboard(token, p, 25, div);
-    if (res.ok && res.data) setLb(res.data);
+    if (res.ok && res.data) { setLb(res.data); setError(null); }
+    else setError(res.error || 'Unable to load leaderboard.');
     setLoading(false);
   }, [token]);
 
@@ -2267,6 +2357,8 @@ function LeaderboardSection({ token }: { token: string | null }) {
         <div className="arena-panel-body">
           {loading ? (
             <div className="arena-loading-inline"><div className="arena-spinner-sm" /> Loading leaderboard…</div>
+          ) : error ? (
+            <div className="arena-empty-inline" role="alert"><p>{error}</p><button type="button" className="arena-btn arena-btn-secondary" onClick={() => void load(page, division)}>Retry</button></div>
           ) : !lb || lb.entries.length === 0 ? (
             <div className="arena-empty-inline">
               <span>🏆</span>
@@ -2371,9 +2463,10 @@ function MatchRow({ match, showDate }: { match: MatchHistoryEntry; showDate?: bo
         <div className="arena-match-secondary">
           {showDate && match.endTime && <span>{formatDateTime(match.endTime)}</span>}
           {!showDate && match.endTime && <span>{formatTimeAgo(match.endTime)}</span>}
+          <span className="arena-match-type-label">{match.matchType === 'tournament' ? 'Tournament' : 'Ranked'}</span>
         </div>
       </div>
-      <div className="arena-match-rating-change">
+      {match.matchType === 'tournament' ? <div className="arena-match-rating-change"><span className="arena-match-type-label">No ranked SR change</span></div> : <div className="arena-match-rating-change">
         <span className={`arena-rating-delta ${match.ratingChange >= 0 ? 'positive' : 'negative'}`}>
           {changeDisplay}
         </span>
@@ -2385,7 +2478,7 @@ function MatchRow({ match, showDate }: { match: MatchHistoryEntry; showDate?: bo
         >
           👁️
         </Link>
-      </div>
+      </div>}
     </div>
   );
 }
@@ -2465,7 +2558,9 @@ function RatingChart({ entries }: { entries: RatingHistoryEntry[] }) {
           {netChange >= 0 ? '+' : ''}{netChange} over {sorted.length} games
         </span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="arena-chart-svg" preserveAspectRatio="none">
+      <svg viewBox={`0 0 ${W} ${H}`} className="arena-chart-svg" preserveAspectRatio="none" role="img" aria-labelledby="rating-chart-title rating-chart-description">
+        <title id="rating-chart-title">Arena rating progression</title>
+        <desc id="rating-chart-description">Rating values across the recent recorded ranked matches.</desc>
         <defs>
           <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={lineColor} stopOpacity="0.25" />

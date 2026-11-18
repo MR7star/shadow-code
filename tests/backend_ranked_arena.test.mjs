@@ -270,7 +270,11 @@ async function runTests() {
     /Unknown arena match player|FOREIGN KEY constraint failed/);
     database.prepare('DELETE FROM arena_matches WHERE id = ?').run(duplicateActiveMatchId);
     assert.equal((await post(`/arena/matches/${activeMatchId}/cancel`, {}, playerF.token)).status, 200);
-    assert.equal((await get(`/arena/matches/${activeMatchId}`, playerF.token)).data.status, 'cancelled');
+    const cancelledDetails = await get(`/arena/matches/${activeMatchId}/result`, playerF.token);
+    assert.equal(cancelledDetails.data.status, 'cancelled');
+    assert.equal(cancelledDetails.data.result, null);
+    assert.equal(cancelledDetails.data.winnerId, null);
+    assert.equal(cancelledDetails.data.rewards, null);
 
     console.log('[Test] Queue expiry and untouched match expiration…');
     assert.equal((await joinQueue(playerD)).data.status, 'queued');
@@ -289,6 +293,11 @@ async function runTests() {
       .get(noShowOpponent.data.matchId).status, 'expired');
     assert.equal(database.prepare('SELECT COUNT(*) as count FROM rating_history WHERE match_id = ?')
       .get(noShowOpponent.data.matchId).count, 0);
+    const unscoredExpired = await get(`/arena/matches/${noShowOpponent.data.matchId}/result`, playerC.token);
+    assert.equal(unscoredExpired.data.result, null);
+    assert.equal(unscoredExpired.data.winnerId, null);
+    assert.equal(unscoredExpired.data.rewards.hunterXp, 0);
+    assert.equal(unscoredExpired.data.rewards.seasonXp, 0);
 
     console.log('[Test] Verified submissions, duplicate processing, deadline, Elo and rewards…');
     await get('/arena/profile', playerA.token);
@@ -303,6 +312,7 @@ async function runTests() {
     const matchDetails = await get(`/arena/matches/${mainMatch.data.matchId}`, playerA.token);
     assert.equal(matchDetails.status, 200);
     assert.equal(matchDetails.data.status, 'ready');
+    assert.equal(matchDetails.data.player1.attemptsCount, 0);
     assert.equal((await get(`/arena/matches/${mainMatch.data.matchId}`, playerH.token)).status, 404);
     assert.equal((await get(`/arena/matches/${mainMatch.data.matchId}/result`, playerA.token)).status, 409);
 
@@ -342,6 +352,9 @@ async function runTests() {
     assert.equal(matchResult.status, 200);
     assert.equal(matchResult.data.status, 'expired');
     assert.equal(matchResult.data.winnerId, playerA.user.id);
+    assert.equal(matchResult.data.player2.attemptsCount, 2);
+    assert.equal(matchResult.data.rewards.hunterXp, 100);
+    assert.equal(matchResult.data.rewards.seasonXp, 150);
     const profileA = (await get('/arena/profile', playerA.token)).data;
     const profileB = (await get('/arena/profile', playerB.token)).data;
     assert.equal(profileA.rating, 1205);
@@ -351,7 +364,7 @@ async function runTests() {
     assert.equal(profileB.losses, 1);
 
     const reward = database.prepare(`
-      SELECT reward_type, xp_awarded FROM arena_match_rewards WHERE match_id = ? AND user_id = ?
+      SELECT reward_type, xp_awarded FROM arena_match_rewards WHERE match_id = ? AND user_id = ? AND reward_type = 'winner_xp'
     `).get(mainMatch.data.matchId, playerA.user.id);
     assert.equal(reward.reward_type, 'winner_xp');
     assert.equal(reward.xp_awarded, 100);

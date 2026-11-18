@@ -1236,6 +1236,7 @@ export function getArenaMatch(matchId, userId = null) {
       timeMs: match.player1_time_ms,
       status: match.player1_status,
       isYou: isPlayer1,
+      attemptsCount: db.prepare('SELECT attempts_count FROM arena_match_participants WHERE match_id = ? AND user_id = ?').get(match.id, match.player1_id)?.attempts_count || 0,
     },
     player2: {
       id: match.player2_id,
@@ -1248,6 +1249,7 @@ export function getArenaMatch(matchId, userId = null) {
       timeMs: match.player2_time_ms,
       status: match.player2_status,
       isYou: isPlayer2,
+      attemptsCount: db.prepare('SELECT attempts_count FROM arena_match_participants WHERE match_id = ? AND user_id = ?').get(match.id, match.player2_id)?.attempts_count || 0,
     },
     winnerId: match.winner_id,
     durationLimitSec: match.duration_limit_sec,
@@ -1263,6 +1265,17 @@ export function getArenaMatch(matchId, userId = null) {
         : match.winner_id
           ? 'loss'
           : null,
+    rewards: (() => {
+      if (!['completed', 'expired'].includes(match.status)) return null;
+      const rows = db.prepare(`
+        SELECT reward_type as type, xp_awarded as xp
+        FROM arena_match_rewards WHERE match_id = ? AND user_id = ?
+      `).all(match.id, userId);
+      return rows.reduce((total, reward) => ({
+        hunterXp: total.hunterXp + (reward.type === 'winner_xp' ? reward.xp : 0),
+        seasonXp: total.seasonXp + (reward.type === 'season_xp' ? reward.xp : 0),
+      }), { hunterXp: 0, seasonXp: 0 });
+    })(),
     tournamentContext: (() => {
       const tm = db.prepare(`
         SELECT tm.id as tournamentMatchId, tm.round, tm.match_index as matchIndex,
@@ -1532,7 +1545,7 @@ function awardArenaMatchXp(userId, matchId, xpAmount, nowIso) {
   `).run(level, xp, xpNeeded, nowIso, userId);
 }
 
-function recordArenaSeasonXp(userId, xpAmount, nowIso) {
+function recordArenaSeasonXp(userId, xpAmount, nowIso, matchId = null) {
   const season = db.prepare(`
     SELECT id FROM seasons
     WHERE status = 'active' AND start_date <= ? AND end_date > ?
@@ -1563,6 +1576,13 @@ function recordArenaSeasonXp(userId, xpAmount, nowIso) {
     nowIso,
     nowIso
   );
+  if (matchId) {
+    db.prepare(`
+      INSERT OR IGNORE INTO arena_match_rewards
+        (id, match_id, user_id, reward_type, xp_awarded, awarded_at)
+      VALUES (?, ?, ?, 'season_xp', ?, ?)
+    `).run(`amr_${matchId}_${userId}_season_xp`, matchId, userId, xpAmount, nowIso);
+  }
 }
 
 /**
@@ -1698,13 +1718,15 @@ export function concludeMatch(matchId, terminalStatus = 'completed') {
     recordArenaSeasonXp(
       match.player1_id,
       p1ScoreFactor === 1 ? (isTournament ? 200 : 150) : p1ScoreFactor === 0.5 ? 80 : 50,
-      nowIso
+      nowIso,
+      matchId
     );
     if (!match.player2_id.startsWith('ai_shadow_')) {
       recordArenaSeasonXp(
         match.player2_id,
         p2ScoreFactor === 1 ? (isTournament ? 200 : 150) : p2ScoreFactor === 0.5 ? 80 : 50,
-        nowIso
+        nowIso,
+        matchId
       );
     }
     db.exec('COMMIT');

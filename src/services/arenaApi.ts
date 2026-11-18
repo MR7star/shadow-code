@@ -112,6 +112,7 @@ export interface ArenaMatchPlayer {
   timeMs: number | null;
   status: string | null;
   isYou: boolean;
+  attemptsCount: number;
 }
 
 export interface ArenaMatchChallenge {
@@ -144,6 +145,7 @@ export interface ArenaMatchDetails {
   deadlineAt: string;
   endTime: string | null;
   result: 'win' | 'loss' | 'draw' | null;
+  rewards: { hunterXp: number; seasonXp: number } | null;
   tournamentContext?: {
     tournamentId: string;
     tournamentTitle: string;
