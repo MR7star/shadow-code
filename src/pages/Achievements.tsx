@@ -1,25 +1,56 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useProgression } from '../context/ProgressionContext';
+import {
+  Award, Brain, Castle, Check, Clock3, Code2, Crown, DoorOpen, Flame, Gift,
+  KeyRound, LockKeyhole, Medal, Orbit, ScrollText, Shield, Skull, Sparkles,
+  Star, Sword, Swords, Tags, Trophy, WandSparkles, Zap,
+  type LucideIcon,
+} from 'lucide-react';
 import type {
   Achievement,
   AchievementCategory,
-  AchievementCategorySummary,
-  AchievementRarity,
   AchievementStats,
+  AchievementRarity,
   UserTitle,
   AchievementsResponse,
 } from '../types';
+import { EmptyState, ErrorState, LoadingState } from '../components/ui';
 import './Achievements.css';
 
-const CATEGORIES: { id: AchievementCategory; name: string; icon: string }[] = [
-  { id: 'all', name: 'All Achievements', icon: '✨' },
-  { id: 'programming', name: 'Programming', icon: '💻' },
-  { id: 'progression', name: 'Progression', icon: '⚡' },
-  { id: 'exploration', name: 'Exploration', icon: '🏰' },
-  { id: 'consistency', name: 'Consistency', icon: '🔥' },
-  { id: 'mastery', name: 'Mastery', icon: '🌟' },
+const CATEGORIES: { id: AchievementCategory; name: string; icon: LucideIcon }[] = [
+  { id: 'all', name: 'All Achievements', icon: Sparkles },
+  { id: 'programming', name: 'Programming', icon: Code2 },
+  { id: 'progression', name: 'Progression', icon: Zap },
+  { id: 'exploration', name: 'Exploration', icon: Castle },
+  { id: 'consistency', name: 'Consistency', icon: Flame },
+  { id: 'mastery', name: 'Mastery', icon: Star },
 ];
+
+const ACHIEVEMENT_ICONS: Record<string, LucideIcon> = {
+  ach_first_spell: WandSparkles,
+  ach_code_weaver: ScrollText,
+  ach_tenacious_coder: Zap,
+  ach_concept_master: Brain,
+  ach_omni_caster: Orbit,
+  ach_level_5: Sparkles,
+  ach_level_10: Shield,
+  ach_rank_d: Sword,
+  ach_rank_c: Swords,
+  ach_gate_explorer: DoorOpen,
+  ach_first_boss: Skull,
+  ach_awakening_gate: Castle,
+  ach_dungeon_master: Crown,
+  ach_streak_3: Flame,
+  ach_streak_7: Zap,
+  ach_daily_bounty: Gift,
+  ach_first_skill: Sparkles,
+  ach_skill_collector: KeyRound,
+  ach_promotion_trial: Trophy,
+  ach_grandmaster: Crown,
+  ach_tourn_contender: Swords,
+  ach_tourn_champion: Trophy,
+};
 
 function getRarityColor(rarity?: AchievementRarity): string {
   switch (rarity) {
@@ -36,47 +67,68 @@ export default function Achievements() {
   const { refreshProgress } = useProgression();
 
   const [achievements, setAchievements] = useState<Achievement[]>([]);
-  const [categories, setCategories] = useState<AchievementCategorySummary[]>([]);
-  const [stats, setStats] = useState<AchievementStats>({
-    total: 20,
-    unlockedCount: 0,
-    completionPercent: 0,
-    totalXpEarned: 0,
-    titlesUnlockedCount: 1,
-  });
   const [titles, setTitles] = useState<UserTitle[]>([]);
+  const [apiStats, setApiStats] = useState<AchievementStats | null>(null);
   const [equippedTitle, setEquippedTitle] = useState<string>('Novice Hunter');
   const [selectedCategory, setSelectedCategory] = useState<AchievementCategory>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'unlocked' | 'in-progress' | 'locked'>('all');
   const [loading, setLoading] = useState<boolean>(true);
+  const [requestState, setRequestState] = useState<'loading' | 'success' | 'error'>('loading');
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const requestVersion = useRef(0);
   const [equippingTitle, setEquippingTitle] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const achievementStats = useMemo(() => {
+    const total = achievements.length;
+    const unlocked = achievements.filter((achievement) => achievement.isUnlocked).length;
+    const locked = total - unlocked;
+    const completionPercent = total === 0 ? 0 : Math.round((unlocked / total) * 100);
+    const categories = CATEGORIES.filter(({ id }) => id !== 'all').map(({ id }) => {
+      const records = achievements.filter((achievement) => achievement.category === id);
+      const categoryUnlocked = records.filter((achievement) => achievement.isUnlocked).length;
+      return { id, total: records.length, unlocked: categoryUnlocked };
+    });
+    return { total, unlocked, locked, completionPercent, categories };
+  }, [achievements]);
 
   // Fetch achievements & titles from server
   const fetchAchievements = useCallback(async () => {
+    const version = ++requestVersion.current;
     if (!token) {
       setLoading(false);
+      setRequestState('error');
+      setRequestError('Sign in to load achievements.');
       return;
     }
 
     try {
       setLoading(true);
+      setRequestState('loading');
+      setRequestError(null);
       const res = await fetch('/api/achievements', {
         headers: { Authorization: `Bearer ${token}` },
       });
 
-      if (res.ok) {
-        const data: AchievementsResponse = await res.json();
-        setAchievements(data.achievements || []);
-        setCategories(data.categories || []);
-        if (data.stats) setStats(data.stats);
-        if (data.titles) setTitles(data.titles);
-        if (data.equippedTitle) setEquippedTitle(data.equippedTitle);
+      if (!res.ok) {
+        throw new Error(`Could not load achievements (${res.status}).`);
       }
+
+      const data: AchievementsResponse = await res.json();
+      if (!Array.isArray(data.achievements)) {
+        throw new Error('The achievement response was invalid. Please try again.');
+      }
+      if (version !== requestVersion.current) return;
+      setAchievements(data.achievements);
+      setApiStats(data.stats ?? null);
+      if (data.titles) setTitles(data.titles);
+      if (data.equippedTitle) setEquippedTitle(data.equippedTitle);
+      setRequestState('success');
     } catch (err) {
-      console.warn('Failed to load achievements from backend:', err);
+      if (version !== requestVersion.current) return;
+      setRequestState('error');
+      setRequestError(err instanceof Error ? err.message : 'Could not load achievements. Please try again.');
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
   }, [token]);
 
@@ -84,8 +136,13 @@ export default function Achievements() {
     if (isAuthenticated) {
       void fetchAchievements();
     } else {
-      setLoading(false);
+      if (!token) {
+        setLoading(false);
+        setRequestState('error');
+        setRequestError('Sign in to load achievements.');
+      }
     }
+    return () => { requestVersion.current += 1; };
   }, [isAuthenticated, fetchAchievements]);
 
   // Handle title equipping
@@ -200,7 +257,7 @@ export default function Achievements() {
       {feedbackMessage && (
         <div className="level-up-toast animate-fadeInUp" role="status" style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 100 }}>
           <div className="level-up-toast-content">
-            <div className="level-up-toast-icon">⚡</div>
+            <div className="level-up-toast-icon"><Zap aria-hidden="true" /></div>
             <div className="level-up-toast-text">
               <div className="level-up-toast-title">Hunter Collection</div>
               <div className="level-up-toast-message">{feedbackMessage}</div>
@@ -214,7 +271,7 @@ export default function Achievements() {
         <div className="achievements-hero-content">
           <div className="achievements-hero-top">
             <div className="achievements-hero-title-wrap">
-              <div className="achievements-hero-icon">🎖️</div>
+              <div className="achievements-hero-icon"><Medal aria-hidden="true" /></div>
               <div>
                 <h1 className="achievements-hero-title">Hunter Collection</h1>
                 <div className="achievements-hero-subtitle">
@@ -226,19 +283,19 @@ export default function Achievements() {
             <div className="achievements-hero-stats">
               <div className="achievements-hero-stat-card">
                 <div className="achievements-hero-stat-value">
-                  {stats.unlockedCount} / {stats.total}
+                  {requestState === 'success' ? `${achievementStats.unlocked} / ${achievementStats.total}` : '—'}
                 </div>
                 <div className="achievements-hero-stat-label">Achievements</div>
               </div>
               <div className="achievements-hero-stat-card">
                 <div className="achievements-hero-stat-value" style={{ color: 'var(--accent-primary)' }}>
-                  +{stats.totalXpEarned}
+                  {requestState === 'success' ? `+${apiStats?.totalXpEarned ?? '—'}` : '—'}
                 </div>
                 <div className="achievements-hero-stat-label">Total XP Earned</div>
               </div>
               <div className="achievements-hero-stat-card">
                 <div className="achievements-hero-stat-value" style={{ color: 'var(--color-warning)' }}>
-                  {titles.length || stats.titlesUnlockedCount}
+                  {requestState === 'success' ? titles.length : '—'}
                 </div>
                 <div className="achievements-hero-stat-label">Titles Unlocked</div>
               </div>
@@ -249,12 +306,12 @@ export default function Achievements() {
           <div className="achievements-overall-progress">
             <div className="achievements-progress-header">
               <span className="achievements-progress-label">Total Mastery Progress</span>
-              <span className="achievements-progress-pct">{stats.completionPercent}% Complete</span>
+              <span className="achievements-progress-pct">{requestState === 'success' ? `${achievementStats.completionPercent}% Complete` : '—'}</span>
             </div>
             <div className="achievements-progress-track">
               <div
                 className="achievements-progress-fill"
-                style={{ width: `${stats.completionPercent}%` }}
+                style={{ width: `${requestState === 'success' ? achievementStats.completionPercent : 0}%` }}
               />
             </div>
           </div>
@@ -265,15 +322,15 @@ export default function Achievements() {
       <section className="titles-section animate-fadeInUp">
         <div className="titles-header">
           <div className="titles-title-wrap">
-            <span style={{ fontSize: '1.4rem' }}>🏷️</span>
+            <Tags size={22} aria-hidden="true" />
             <h2 className="titles-title">Hunter Titles</h2>
-            <span className="titles-badge-count">{titles.length} Owned</span>
+            <span className="titles-badge-count">{requestState === 'success' ? titles.length : '—'} Owned</span>
           </div>
 
           <div className="equipped-title-banner">
             <span className="equipped-title-label">Equipped Title:</span>
             <span className="equipped-title-badge">
-              ⚡ {equippedTitle}
+              <Zap size={16} aria-hidden="true" /> {equippedTitle}
             </span>
             {equippedTitle !== 'Novice Hunter' && (
               <button
@@ -289,7 +346,7 @@ export default function Achievements() {
           </div>
         </div>
 
-        {titles.length === 0 ? (
+        {requestState !== 'success' ? null : titles.length === 0 ? (
           <div className="achievements-empty">
             No titles unlocked yet. Complete quests and achievements to earn titles!
           </div>
@@ -312,7 +369,7 @@ export default function Achievements() {
 
                   {isEquipped ? (
                     <button type="button" className="title-equip-btn active" disabled>
-                      ✓ Equipped
+                      <Check size={14} aria-hidden="true" /> Equipped
                     </button>
                   ) : (
                     <button
@@ -335,10 +392,12 @@ export default function Achievements() {
       <section className="achievements-filters animate-fadeInUp">
         <div className="category-tabs">
           {CATEGORIES.map((cat) => {
-            const catSummary = categories.find((c) => c.id === cat.id);
+            const catSummary = achievementStats.categories.find((category) => category.id === cat.id);
             const countLabel =
-              cat.id === 'all'
-                ? `${stats.unlockedCount}/${stats.total}`
+              requestState !== 'success'
+                ? '—'
+                : cat.id === 'all'
+                ? `${achievementStats.unlocked}/${achievementStats.total}`
                 : catSummary
                 ? `${catSummary.unlocked}/${catSummary.total}`
                 : '';
@@ -350,7 +409,7 @@ export default function Achievements() {
                 className={`category-tab-btn ${selectedCategory === cat.id ? 'active' : ''}`}
                 onClick={() => setSelectedCategory(cat.id)}
               >
-                <span>{cat.icon}</span>
+                <cat.icon size={18} strokeWidth={1.8} aria-hidden="true" />
                 <span>{cat.name}</span>
                 {countLabel && <span className="category-tab-badge">{countLabel}</span>}
               </button>
@@ -364,38 +423,42 @@ export default function Achievements() {
             className={`status-filter-btn ${statusFilter === 'all' ? 'active' : ''}`}
             onClick={() => setStatusFilter('all')}
           >
-            All ({achievements.length})
+            All ({requestState === 'success' ? achievementStats.total : '—'})
           </button>
           <button
             type="button"
             className={`status-filter-btn ${statusFilter === 'unlocked' ? 'active' : ''}`}
             onClick={() => setStatusFilter('unlocked')}
           >
-            ✓ Unlocked ({achievements.filter((a) => a.isUnlocked).length})
+            <Check size={14} aria-hidden="true" /> Unlocked ({requestState === 'success' ? achievementStats.unlocked : '—'})
           </button>
           <button
             type="button"
             className={`status-filter-btn ${statusFilter === 'in-progress' ? 'active' : ''}`}
             onClick={() => setStatusFilter('in-progress')}
           >
-            ⏳ In Progress ({achievements.filter((a) => !a.isUnlocked && (a.progress || 0) > 0).length})
+            <Clock3 size={14} aria-hidden="true" /> In Progress ({requestState === 'success' ? achievements.filter((a) => !a.isUnlocked && (a.progress || 0) > 0).length : '—'})
           </button>
           <button
             type="button"
             className={`status-filter-btn ${statusFilter === 'locked' ? 'active' : ''}`}
             onClick={() => setStatusFilter('locked')}
           >
-            🔒 Locked ({achievements.filter((a) => !a.isUnlocked && (a.progress || 0) === 0).length})
+            <LockKeyhole size={14} aria-hidden="true" /> Locked ({requestState === 'success' ? achievementStats.locked : '—'})
           </button>
         </div>
       </section>
 
       {/* Achievements Grid */}
       <section className="achievements-grid stagger-children">
-        {loading ? (
-          <div className="achievements-empty">Loading hunter achievements…</div>
+        {loading || requestState === 'loading' ? (
+          <LoadingState label="Loading hunter achievements" lines={3} />
+        ) : requestState === 'error' ? (
+          <ErrorState message={requestError || 'Could not load achievements.'} onRetry={() => void fetchAchievements()} retryLabel="Retry" />
+        ) : achievements.length === 0 ? (
+          <EmptyState title="No achievements yet" description="There are no achievements available right now." />
         ) : filteredAchievements.length === 0 ? (
-          <div className="achievements-empty">No achievements match your filters.</div>
+          <EmptyState title="No matching achievements" description="No achievements match the selected category and status filters." />
         ) : (
           filteredAchievements.map((ach) => {
             const rarity = ach.rarity || 'common';
@@ -420,7 +483,7 @@ export default function Achievements() {
                       borderColor: `${rarityColor}35`,
                     }}
                   >
-                    {isUnlocked ? ach.icon : '🔒'}
+                    {isUnlocked ? (() => { const Icon = ACHIEVEMENT_ICONS[ach.id] ?? Award; return <Icon size={23} strokeWidth={1.8} aria-hidden="true" />; })() : <LockKeyhole size={21} strokeWidth={1.8} aria-hidden="true" />}
                   </div>
 
                   <div className="achievement-title-area">
@@ -480,12 +543,12 @@ export default function Achievements() {
                 <div className="achievement-rewards">
                   {(ach.xpReward || 0) > 0 && (
                     <span className="reward-tag xp">
-                      ⭐ +{ach.xpReward} XP
+                      <Star size={13} aria-hidden="true" /> +{ach.xpReward} XP
                     </span>
                   )}
                   {ach.titleReward && (
                     <span className="reward-tag title">
-                      🏷️ Title: "{ach.titleReward}"
+                      <Tags size={13} aria-hidden="true" /> Title: "{ach.titleReward}"
                     </span>
                   )}
 
