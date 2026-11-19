@@ -94,11 +94,18 @@
 }
 
 .podium-name {
+  min-width: 0;
+  max-width: 100%;
   font-family: var(--font-display);
   font-size: 0.9rem;
   font-weight: 600;
   color: var(--text-primary);
   text-align: center;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
 .podium-rank-badge {
@@ -125,14 +132,25 @@
 
 /* ─── Leaderboard Table ───────────────────────────────────────── */
 .leaderboard-table-wrap {
+  max-width: 100%;
+  min-width: 0;
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-default) var(--bg-surface);
+}
+
+.leaderboard-table-wrap:focus-visible {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: 3px;
 }
 
 .leaderboard-table {
   width: 100%;
+  min-width: 780px;
   border-collapse: collapse;
 }
 
@@ -345,6 +363,10 @@
     max-width: 300px;
     flex-direction: row;
     padding: 16px;
+  }
+  .podium-name {
+    flex: 1 1 0;
+    text-align: left;
   }
   .podium-card.first .podium-avatar {
     width: 56px;

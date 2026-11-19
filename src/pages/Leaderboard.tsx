@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useProgression } from '../context/ProgressionContext';
 import { useAuth } from '../context/AuthContext';
-import { leaderboard as defaultLeaderboard } from '../data/mockData';
 import type { LeaderboardCategory } from '../types';
+import { EmptyState, ErrorState, LoadingState } from '../components/ui';
 import './Leaderboard.css';
 
 function getRankColor(rank: string): string {
@@ -38,13 +38,16 @@ export default function Leaderboard() {
   const [rankFilter, setRankFilter] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(1);
-  const [serverData, setServerData] = useState<any[] | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [serverData, setServerData] = useState<any[]>([]);
+  const [requestState, setRequestState] = useState<'loading' | 'success' | 'empty' | 'error'>('loading');
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const [retryVersion, setRetryVersion] = useState(0);
 
   // Fetch competitive leaderboard from backend
   const fetchLeaderboard = useCallback(
-    async (type: LeaderboardCategory, page = 1, search = '', rank = 'all') => {
-      setIsLoading(true);
+    async (type: LeaderboardCategory, page: number, search: string, rank: string, signal: AbortSignal) => {
+      setRequestState('loading');
+      setRequestError(null);
       try {
         const params = new URLSearchParams();
         params.set('type', type);
@@ -53,36 +56,40 @@ export default function Leaderboard() {
         if (search.trim()) params.set('search', search.trim());
         if (rank !== 'all') params.set('rank', rank);
 
-        const res = await fetch(`/api/leaderboard?${params.toString()}`);
-        if (!res.ok) return;
+        const res = await fetch(`/api/leaderboard?${params.toString()}`, { signal });
+        if (!res.ok) throw new Error(`Leaderboard request failed (${res.status}).`);
 
         const data = await res.json();
         if (Array.isArray(data)) {
           setServerData(data);
           setTotalPages(1);
-          setCurrentPage(1);
+          setRequestState(data.length ? 'success' : 'empty');
         } else if (data && Array.isArray(data.entries)) {
           setServerData(data.entries);
           setTotalPages(data.totalPages || 1);
           setCurrentPage(data.page || 1);
+          setRequestState(data.entries.length ? 'success' : 'empty');
+        } else {
+          throw new Error('Leaderboard response was invalid.');
         }
       } catch (err) {
-        console.warn('Failed to load competitive leaderboard:', err);
-      } finally {
-        setIsLoading(false);
+        if (signal.aborted) return;
+        setRequestError(err instanceof Error ? err.message : 'Unable to load leaderboard.');
+        setRequestState('error');
       }
     },
     []
   );
 
   useEffect(() => {
-    void fetchLeaderboard(activeTab, currentPage, searchQuery, rankFilter);
-  }, [fetchLeaderboard, activeTab, currentPage, searchQuery, rankFilter]);
+    const controller = new AbortController();
+    void fetchLeaderboard(activeTab, currentPage, searchQuery, rankFilter, controller.signal);
+    return () => controller.abort();
+  }, [fetchLeaderboard, activeTab, currentPage, searchQuery, rankFilter, retryVersion]);
 
   // Fallback to mock data only for global players tab when offline
   const entries = useMemo(() => {
-    if (serverData !== null) {
-      return serverData.map((entry) => {
+    return serverData.map((entry) => {
         const isYou =
           isAuthenticated &&
           activeTab !== 'guilds' &&
@@ -101,31 +108,7 @@ export default function Leaderboard() {
             : {}),
         };
       });
-    }
-
-    if (activeTab === 'players') {
-      return defaultLeaderboard.map((entry) => {
-        const isYou =
-          isAuthenticated &&
-          (entry.playerId === player.id || entry.name === player.name);
-        return {
-          ...entry,
-          isCurrentPlayer: isYou,
-          ...(isYou
-            ? {
-                level: player.level,
-                xp: player.xp,
-                playerRank: player.rank,
-                questsCompleted: player.questsCompleted,
-                name: player.name,
-              }
-            : {}),
-        };
-      });
-    }
-
-    return [];
-  }, [serverData, defaultLeaderboard, activeTab, player, isAuthenticated]);
+  }, [serverData, activeTab, player, isAuthenticated]);
 
   const top3 = entries.slice(0, 3);
 
@@ -215,7 +198,7 @@ export default function Leaderboard() {
       </div>
 
       {/* Podium (Top 3) */}
-      {top3.length > 0 && (
+      {requestState === 'success' && top3.length > 0 && (
         <div className="podium stagger-children">
           {top3.map((entry, i) => {
             const displayName = entry.name || entry.guildName || 'Hunter';
@@ -234,7 +217,7 @@ export default function Leaderboard() {
                 >
                   {isGuild ? entry.emblem || '🛡️' : displayName.charAt(0)}
                 </div>
-                <div className="podium-name">{displayName}</div>
+                <div className="podium-name" title={displayName} aria-label={displayName}>{displayName}</div>
                 <span
                   className="podium-rank-badge"
                   style={{
@@ -260,7 +243,18 @@ export default function Leaderboard() {
       )}
 
       {/* Table */}
-      <div className="leaderboard-table-wrap animate-fadeInUp">
+      {requestState === 'loading' ? (
+        <LoadingState label="Loading leaderboard" lines={4} />
+      ) : requestState === 'error' ? (
+        <ErrorState message={requestError ?? 'Unable to load leaderboard.'} onRetry={() => setRetryVersion((version) => version + 1)} retryLabel="Retry" />
+      ) : requestState === 'empty' ? (
+        <EmptyState title="No rankings found" description="There are no leaderboard records for these filters." />
+      ) : <div
+        className="leaderboard-table-wrap animate-fadeInUp"
+        role="region"
+        aria-label="Leaderboard results"
+        tabIndex={0}
+      >
         <table className="leaderboard-table">
           <thead>
             {activeTab === 'guilds' ? (
@@ -306,13 +300,7 @@ export default function Leaderboard() {
             )}
           </thead>
           <tbody>
-            {entries.length === 0 ? (
-              <tr>
-                <td colSpan={8} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>
-                  No ranking records found for this category.
-                </td>
-              </tr>
-            ) : (
+            {(
               entries.map((entry) => {
                 const isGuild = activeTab === 'guilds';
                 const rowKey = entry.playerId || entry.id || `${entry.name}-${entry.rank}`;
@@ -455,14 +443,14 @@ export default function Leaderboard() {
             )}
           </tbody>
         </table>
-      </div>
+      </div>}
 
       {/* Pagination Controls */}
       {totalPages > 1 && (
         <div className="lb-pagination">
           <button
             className="lb-page-btn"
-            disabled={currentPage <= 1 || isLoading}
+            disabled={currentPage <= 1 || requestState === 'loading'}
             onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
           >
             Previous
@@ -472,7 +460,7 @@ export default function Leaderboard() {
           </span>
           <button
             className="lb-page-btn"
-            disabled={currentPage >= totalPages || isLoading}
+            disabled={currentPage >= totalPages || requestState === 'loading'}
             onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
           >
             Next
