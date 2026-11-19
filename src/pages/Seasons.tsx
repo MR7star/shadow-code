@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useProgression } from '../context/ProgressionContext';
+import { Check, Clock3, Sparkles } from 'lucide-react';
 import './Seasons.css';
 
 interface SeasonReward {
@@ -63,7 +64,9 @@ export default function Seasons() {
   const { refreshProgress } = useProgression();
   const [seasons, setSeasons] = useState<SeasonSummary[]>([]);
   const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
-  const [details, setDetails] = useState<SeasonDetails | null>(null);
+  const [details, setDetails] = useState<{ seasonId: string; data: SeasonDetails } | null>(null);
+  const [detailState, setDetailState] = useState<{ seasonId: string | null; loading: boolean; error: string | null }>({ seasonId: null, loading: false, error: null });
+  const [detailRefreshKey, setDetailRefreshKey] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isClaiming, setIsClaiming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,21 +98,6 @@ export default function Seasons() {
     }
   }, []);
 
-  const fetchDetails = useCallback(async (seasonId: string, activeToken: string | null) => {
-    setError(null);
-    try {
-      const headers: Record<string, string> = {};
-      if (activeToken) headers.Authorization = `Bearer ${activeToken}`;
-      const response = await fetch(`/api/seasons/${encodeURIComponent(seasonId)}`, { headers });
-      if (!response.ok) throw new Error('Unable to load this season.');
-      const data: SeasonDetails = await response.json();
-      setDetails(data);
-    } catch (fetchError) {
-      setDetails(null);
-      setError(fetchError instanceof Error ? fetchError.message : 'Unable to load this season.');
-    }
-  }, []);
-
   useEffect(() => {
     void fetchSeasons();
   }, [fetchSeasons]);
@@ -117,10 +105,34 @@ export default function Seasons() {
   useEffect(() => {
     if (!selectedSeasonId) {
       setDetails(null);
+      setDetailState({ seasonId: null, loading: false, error: null });
       return;
     }
-    void fetchDetails(selectedSeasonId, token);
-  }, [fetchDetails, selectedSeasonId, token]);
+    const seasonId = selectedSeasonId;
+    const controller = new AbortController();
+    setDetails(null);
+    setDetailState({ seasonId, loading: true, error: null });
+    const load = async () => {
+      try {
+        const headers: Record<string, string> = {};
+        if (token) headers.Authorization = `Bearer ${token}`;
+        const response = await fetch(`/api/seasons/${encodeURIComponent(seasonId)}`, { headers, signal: controller.signal });
+        if (!response.ok) throw new Error('Unable to load this season.');
+        const data: SeasonDetails = await response.json();
+        if (controller.signal.aborted) return;
+        setDetails({ seasonId, data });
+        setDetailState({ seasonId, loading: false, error: null });
+      } catch (fetchError) {
+        if (controller.signal.aborted) return;
+        setDetails(null);
+        setDetailState({ seasonId, loading: false, error: fetchError instanceof Error ? fetchError.message : 'Unable to load this season.' });
+      }
+    };
+    void load();
+    return () => controller.abort();
+  }, [selectedSeasonId, token, detailRefreshKey]);
+
+  const selectedDetails = details?.seasonId === selectedSeasonId ? details.data : null;
 
   const claimReward = async () => {
     if (!selectedSeasonId || !token) {
@@ -128,7 +140,7 @@ export default function Seasons() {
       return;
     }
     setIsClaiming(true);
-    setError(null);
+      setError(null);
     setNotice(null);
     try {
       const response = await fetch(`/api/seasons/${encodeURIComponent(selectedSeasonId)}/claim`, {
@@ -142,7 +154,8 @@ export default function Seasons() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to claim this season reward.');
       setNotice(`Claimed ${data.xpAwarded} XP${data.titleAwarded ? ` and the title “${data.titleAwarded}”` : ''}.`);
-      await Promise.all([fetchDetails(selectedSeasonId, token), refreshProgress()]);
+      setDetailRefreshKey((key) => key + 1);
+      await refreshProgress();
     } catch (claimError) {
       setError(claimError instanceof Error ? claimError.message : 'Unable to claim this season reward.');
     } finally {
@@ -189,7 +202,7 @@ export default function Seasons() {
                   onClick={() => setSelectedSeasonId(season.id)}
                 >
                   <span className={`season-list-icon ${season.status}`}>
-                    {season.status === 'completed' ? '✓' : season.status === 'upcoming' ? '◷' : '✦'}
+                    {season.status === 'completed' ? <Check size={16} aria-hidden="true" /> : season.status === 'upcoming' ? <Clock3 size={16} aria-hidden="true" /> : <Sparkles size={16} aria-hidden="true" />}
                   </span>
                   <span className="season-list-copy">
                     <strong>{season.name}</strong>
@@ -202,53 +215,53 @@ export default function Seasons() {
           )}
         </aside>
 
-        {selectedSeason && details ? (
+        {selectedSeason && selectedDetails ? (
           <section className="season-detail-panel">
             <div className="season-detail-heading">
               <div>
-                <span className="seasons-kicker">Season {details.seasonNumber}</span>
-                <h2>{details.name}</h2>
-                <p>{details.description}</p>
+                <span className="seasons-kicker">Season {selectedDetails.seasonNumber}</span>
+                <h2>{selectedDetails.name}</h2>
+                <p>{selectedDetails.description}</p>
               </div>
               <div className="season-date-range">
                 <span>EVENT PERIOD</span>
-                <strong>{formatDate(details.startDate)} — {formatDate(details.endDate)}</strong>
+                <strong>{formatDate(selectedDetails.startDate)} — {formatDate(selectedDetails.endDate)}</strong>
               </div>
             </div>
 
             <div className="season-stat-grid">
               <article className="season-stat-card">
                 <span>PARTICIPANTS</span>
-                <strong>{details.participantCount.toLocaleString()}</strong>
+              <strong>{selectedDetails.participantCount.toLocaleString()}</strong>
               </article>
               <article className="season-stat-card">
                 <span>YOUR SEASONAL XP</span>
-                <strong>{details.userStanding?.seasonalXp.toLocaleString() ?? '—'}</strong>
+              <strong>{selectedDetails.userStanding?.seasonalXp.toLocaleString() ?? '—'}</strong>
               </article>
               <article className="season-stat-card">
                 <span>YOUR PLACEMENT</span>
-                <strong>{details.userStanding?.finalPlacement ? `#${details.userStanding.finalPlacement}` : '—'}</strong>
+              <strong>{selectedDetails.userStanding?.finalPlacement ? `#${selectedDetails.userStanding.finalPlacement}` : '—'}</strong>
               </article>
               <article className="season-stat-card">
                 <span>YOUR DIVISION</span>
-                <strong>{details.userStanding?.division ?? '—'}</strong>
+              <strong>{selectedDetails.userStanding?.division ?? '—'}</strong>
               </article>
             </div>
 
-            {details.canClaimReward && details.claimableReward && (
+            {selectedDetails.canClaimReward && selectedDetails.claimableReward && (
               <div className="season-reward-callout">
                 <div>
                   <span className="seasons-kicker">Season reward unlocked</span>
-                  <strong>{details.claimableReward.tier} · {details.claimableReward.xp} XP</strong>
-                  {details.claimableReward.title && <small>Title: {details.claimableReward.title}</small>}
+                  <strong>{selectedDetails.claimableReward.tier} · {selectedDetails.claimableReward.xp} XP</strong>
+                  {selectedDetails.claimableReward.title && <small>Title: {selectedDetails.claimableReward.title}</small>}
                 </div>
                 <button type="button" className="season-claim-button" onClick={() => void claimReward()} disabled={isClaiming}>
                   {isClaiming ? 'Claiming…' : 'Claim reward'}
                 </button>
               </div>
             )}
-            {details.userStanding?.rewardsClaimed === 1 && (
-              <div className="season-reward-claimed" role="status">Season reward claimed {details.userStanding.claimedAt ? `on ${formatDate(details.userStanding.claimedAt)}` : ''}.</div>
+            {selectedDetails.userStanding?.rewardsClaimed === 1 && (
+              <div className="season-reward-claimed" role="status">Season reward claimed {selectedDetails.userStanding.claimedAt ? `on ${formatDate(selectedDetails.userStanding.claimedAt)}` : ''}.</div>
             )}
 
             <section className="season-leaderboard">
@@ -259,7 +272,7 @@ export default function Seasons() {
                 </div>
                 <span>Ranked by seasonal XP</span>
               </div>
-              {details.topRankers.length === 0 ? (
+              {selectedDetails.topRankers.length === 0 ? (
                 <p className="seasons-empty">The standings will appear as hunters earn seasonal XP.</p>
               ) : (
                 <div className="season-table-wrap">
@@ -268,7 +281,7 @@ export default function Seasons() {
                       <tr><th>Rank</th><th>Hunter</th><th>Division</th><th>Rating</th><th>Season XP</th></tr>
                     </thead>
                     <tbody>
-                      {details.topRankers.map((hunter) => (
+                      {selectedDetails.topRankers.map((hunter) => (
                         <tr key={hunter.userId}>
                           <td><span className={`season-rank-number ${hunter.rank <= 3 ? `top-${hunter.rank}` : ''}`}>#{hunter.rank}</span></td>
                           <td>
@@ -294,7 +307,7 @@ export default function Seasons() {
                 </div>
               </div>
               <div className="season-reward-grid">
-                {Object.entries(details.rewards).map(([division, reward]) => (
+                {Object.entries(selectedDetails.rewards).map(([division, reward]) => (
                   <article className="season-reward-card" key={division}>
                     <span>{division}</span>
                     <strong>{reward.xp.toLocaleString()} XP</strong>
@@ -304,13 +317,17 @@ export default function Seasons() {
               </div>
             </section>
           </section>
-        ) : !isLoading && selectedSeason ? (
+        ) : selectedSeason ? (
           <section className="season-detail-panel seasons-empty-panel">
-            <p>{error ? 'Season information could not be displayed.' : 'Loading season details…'}</p>
+            {detailState.seasonId === selectedSeason.id && detailState.loading ? (
+              <p role="status" aria-live="polite">Loading {selectedSeason.name} details…</p>
+            ) : detailState.seasonId === selectedSeason.id && detailState.error ? (
+              <><p role="alert">{detailState.error}</p><button type="button" className="season-claim-button" onClick={() => setDetailRefreshKey((key) => key + 1)}>Retry</button></>
+            ) : <p role="status" aria-live="polite">Loading {selectedSeason.name} details…</p>}
           </section>
         ) : (
           <section className="season-detail-panel seasons-empty-panel">
-            <span className="seasons-empty-icon">✦</span>
+            <Sparkles className="seasons-empty-icon" size={32} aria-hidden="true" />
             <h2>Choose your next season</h2>
             <p>Seasonal events and their historical standings will appear here.</p>
             {!isAuthenticated && <button type="button" className="season-claim-button" onClick={openAuthModal}>Sign in to track your progress</button>}
