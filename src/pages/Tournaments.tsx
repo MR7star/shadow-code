@@ -5,6 +5,7 @@ import {
   CalendarDays,
   CheckCircle2,
   Clock3,
+  CircleX,
   Crown,
   Eye,
   Gift,
@@ -47,6 +48,34 @@ import './Tournaments.css';
 type DetailTab = 'bracket' | 'live' | 'roster' | 'rewards';
 type DetailFailureKind = 'notFound' | 'unauthorized' | 'forbidden' | 'error';
 type RewardDraft = { xp: string; title: string };
+
+interface TournamentCancelDialogProps {
+  open: boolean;
+  tournamentName: string;
+  error: string | null;
+  pending: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}
+
+function TournamentCancelDialog({ open, tournamentName, error, pending, onClose, onConfirm }: TournamentCancelDialogProps) {
+  return (
+    <Modal
+      open={open}
+      title={`Cancel “${tournamentName}”?`}
+      description={`This will cancel “${tournamentName}” for all registered participants. This action cannot be undone.`}
+      onClose={onClose}
+    >
+      {error && <p className="tournament-form-error" role="alert">{error}</p>}
+      <div className="modal-footer">
+        <button type="button" className="btn-secondary" onClick={onClose} disabled={pending}>Keep tournament</button>
+        <button type="button" className="btn-action-cancel" onClick={onConfirm} disabled={pending}>
+          {pending ? <><LoaderCircle className="spinning-icon" size={16} aria-hidden="true" /> Cancelling…</> : 'Cancel tournament'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
 
 function bracketStatusLabel(status: string): string {
   switch (status) {
@@ -131,6 +160,8 @@ export default function Tournaments() {
     semifinalist: { xp: '', title: '' },
   });
   const [tournamentPendingCancel, setTournamentPendingCancel] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   // Notice helper
@@ -382,12 +413,14 @@ export default function Tournaments() {
 
   const handleCancel = (tournId: string) => {
     if (!isAuthenticated || !token) return;
+    setCancelError(null);
     setTournamentPendingCancel(tournId);
   };
 
   const confirmCancelTournament = async () => {
     const tournId = tournamentPendingCancel;
     if (!isAuthenticated || !token || !tournId) return;
+    setCancelError(null);
     const key = `cancel:${tournId}`;
     if (!beginAction(key)) return;
     try {
@@ -396,7 +429,7 @@ export default function Tournaments() {
         showTournamentNotice(tournId, 'Tournament has been cancelled.');
         refreshTournamentView(tournId);
         setTournamentPendingCancel(null);
-      } else showTournamentNotice(tournId, res.error || 'Failed to cancel tournament.', 'error');
+      } else setCancelError(res.error || 'Failed to cancel tournament.');
     } finally { endAction(key); }
   };
 
@@ -442,13 +475,14 @@ export default function Tournaments() {
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setCreateError(null);
     if (!isAuthenticated || !token) {
       openAuthModal();
       return;
     }
 
     if (!newTitle.trim() || newTitle.trim().length < 3) {
-      showNotice('Tournament title must be at least 3 characters long.', 'error');
+      setCreateError('Tournament title must be at least 3 characters long.');
       return;
     }
 
@@ -464,13 +498,13 @@ export default function Tournaments() {
         if (!draft.xp.trim() && !draft.title.trim()) continue;
         const xp = Number(draft.xp);
         if (!draft.xp.trim() || !Number.isInteger(xp) || xp < 0 || !draft.title.trim()) {
-          showNotice(`${label} rewards need a non-negative whole-number XP amount and a title.`, 'error');
+          setCreateError(`${label} rewards need a non-negative whole-number XP amount and a title.`);
           return;
         }
         rewards[key] = { xp, title: draft.title.trim() };
       }
       if (Object.keys(rewards).length === 0) {
-        showNotice('Add at least one complete reward tier, or use the server defaults.', 'error');
+        setCreateError('Add at least one complete reward tier, or turn off custom rewards to use the server defaults.');
         return;
       }
     }
@@ -496,7 +530,7 @@ export default function Tournaments() {
         setCustomizeRewards(false);
         setRewardDrafts({ firstPlace: { xp: '', title: '' }, secondPlace: { xp: '', title: '' }, semifinalist: { xp: '', title: '' } });
         navigate(`/tournaments/${res.data.tournamentId}`);
-      } else showNotice(res.error || 'Failed to create tournament.', 'error');
+      } else setCreateError(res.error || 'Failed to create tournament.');
     } finally {
       setIsSubmitting(false);
       endAction(key);
@@ -523,6 +557,7 @@ export default function Tournaments() {
   const bracketRounds: BracketRound[] = useMemo(() => {
     return selectedTournament?.bracket ?? [];
   }, [selectedTournament]);
+  const hasBracketMatches = bracketRounds.some((round) => round.matches.length > 0);
   const rewardTiers = selectedTournament ? [
     { key: 'firstPlace', label: '1st Place Champion', icon: <Medal size={16} aria-hidden="true" />, reward: selectedTournament.rewards.firstPlace, className: 'first' },
     { key: 'secondPlace', label: '2nd Place Finalist', icon: <Medal size={16} aria-hidden="true" />, reward: selectedTournament.rewards.secondPlace, className: 'second' },
@@ -682,6 +717,17 @@ export default function Tournaments() {
           )}
         </section>
 
+        {selectedTournament.status === 'completed' && (
+          <section className="completed-result" aria-labelledby="completed-result-title">
+            <div className="completed-result-icon"><Trophy size={20} aria-hidden="true" /></div>
+            <div className="completed-result-copy">
+              <span className="section-kicker">Final result</span>
+              <h3 id="completed-result-title">{selectedTournament.winnerName ? `${selectedTournament.winnerName} won the tournament` : 'Tournament completed'}</h3>
+              <p>{participant?.finalRank ? `Your final placement: #${participant.finalRank}.` : 'No personal placement is available for this account.'}</p>
+            </div>
+          </section>
+        )}
+
         {/* User Registration Status Card */}
         <div className={`user-status-card ${isRegistered ? 'registered' : ''}`}>
           <div className="user-status-left">
@@ -756,13 +802,13 @@ export default function Tournaments() {
               </span>
             </div>
 
-            {bracketRounds.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '50px 20px', color: 'var(--text-muted)' }}>
+            {!hasBracketMatches ? (
+              <div className="bracket-empty-state">
                 <div className="tournaments-empty-icon"><Trophy aria-hidden="true" /></div>
-                <h3 style={{ color: 'var(--text-primary)', marginBottom: '6px' }}>Bracket Not Generated Yet</h3>
-                <p style={{ fontSize: '0.85rem' }}>
-                  The single-elimination bracket will be constructed automatically once the tournament creator starts the event.
-                </p>
+                <h3>Bracket not generated yet</h3>
+                <p>{selectedTournament.status === 'registration'
+                  ? 'The bracket will appear after the tournament creator starts the event.'
+                  : 'No match data is available for this bracket yet.'}</p>
               </div>
             ) : (
               <div className="bracket-container" role="region" aria-label="Tournament bracket; rounds progress from left to right" tabIndex={0}>
@@ -785,6 +831,8 @@ export default function Tournaments() {
                         const canSpectate = (isLive || isCompleted) && Boolean(matchNode.arenaMatchId);
                         const p1IsWinner = Boolean(matchNode.winnerId && matchNode.p1Id && matchNode.winnerId === matchNode.p1Id && (isCompleted || isBye));
                         const p2IsWinner = Boolean(matchNode.winnerId && matchNode.p2Id && matchNode.winnerId === matchNode.p2Id && (isCompleted || isBye));
+                        const p1IsEliminated = Boolean(isCompleted && matchNode.winnerId && matchNode.p1Id && matchNode.winnerId !== matchNode.p1Id);
+                        const p2IsEliminated = Boolean(isCompleted && matchNode.winnerId && matchNode.p2Id && matchNode.winnerId !== matchNode.p2Id);
 
                         return (
                           <div
@@ -801,7 +849,7 @@ export default function Tournaments() {
                             </div>
 
                             {/* Combatant 1 Slot */}
-                            <div className={`bracket-match-slot ${p1IsWinner ? 'winner' : ''} ${matchNode.p1Id === user?.id ? 'you' : ''}`}>
+                            <div className={`bracket-match-slot ${p1IsWinner ? 'winner' : ''} ${p1IsEliminated ? 'eliminated' : ''} ${matchNode.p1Id === user?.id ? 'you' : ''}`}>
                               <div className="bracket-slot-name">
                                 {p1IsWinner ? <Crown size={15} aria-hidden="true" /> : <Swords size={15} aria-hidden="true" />}
                                 <span>{matchNode.p1Name || (matchNode.round === 1 ? 'Empty slot' : 'To be determined')}</span>
@@ -809,10 +857,11 @@ export default function Tournaments() {
                               {matchNode.p1Id === user?.id && (
                                 <span className="participant-badge-you">You</span>
                               )}
+                              {p1IsEliminated && <span className="bracket-eliminated"><CircleX size={13} aria-hidden="true" /> Eliminated</span>}
                             </div>
 
                             {/* Combatant 2 Slot */}
-                            <div className={`bracket-match-slot ${p2IsWinner ? 'winner' : ''} ${matchNode.p2Id === user?.id ? 'you' : ''}`}>
+                            <div className={`bracket-match-slot ${p2IsWinner ? 'winner' : ''} ${p2IsEliminated ? 'eliminated' : ''} ${matchNode.p2Id === user?.id ? 'you' : ''}`}>
                               <div className="bracket-slot-name">
                                 {p2IsWinner ? <Crown size={15} aria-hidden="true" /> : <ShieldCheck size={15} aria-hidden="true" />}
                                 <span>{matchNode.p2Name || (isBye ? 'BYE (Auto Advance)' : matchNode.round === 1 ? 'Empty slot' : 'To be determined')}</span>
@@ -820,6 +869,7 @@ export default function Tournaments() {
                               {matchNode.p2Id === user?.id && (
                                 <span className="participant-badge-you">You</span>
                               )}
+                              {p2IsEliminated && <span className="bracket-eliminated"><CircleX size={13} aria-hidden="true" /> Eliminated</span>}
                             </div>
 
                             {/* Match Actions */}
@@ -961,7 +1011,7 @@ export default function Tournaments() {
                 No hunters have registered yet. Be the first to enter!
               </div>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
+              <div className="participants-table-wrap" role="region" aria-label="Registered tournament participants" tabIndex={0}>
                 <table className="participants-table">
                   <thead>
                     <tr>
@@ -1055,19 +1105,16 @@ export default function Tournaments() {
             </div>
           </div>
         )}
-        <Modal
+        <TournamentCancelDialog
           open={Boolean(tournamentPendingCancel)}
-          title="Cancel tournament?"
-          description="This will cancel the tournament for all registered participants. This action cannot be undone."
-          onClose={() => { if (!tournamentPendingCancel || !pendingActions.has(`cancel:${tournamentPendingCancel}`)) setTournamentPendingCancel(null); }}
-        >
-          <div className="modal-footer">
-            <button type="button" className="btn-secondary" onClick={() => setTournamentPendingCancel(null)} disabled={Boolean(tournamentPendingCancel && pendingActions.has(`cancel:${tournamentPendingCancel}`))}>Keep tournament</button>
-            <button type="button" className="btn-action-cancel" onClick={() => void confirmCancelTournament()} disabled={!tournamentPendingCancel || pendingActions.has(`cancel:${tournamentPendingCancel ?? ''}`)}>
-              {tournamentPendingCancel && pendingActions.has(`cancel:${tournamentPendingCancel}`) ? <><LoaderCircle className="spinning-icon" size={16} aria-hidden="true" /> Cancelling…</> : 'Cancel tournament'}
-            </button>
-          </div>
-        </Modal>
+          tournamentName={tournamentPendingCancel === selectedTournament.id ? selectedTournament.title : 'this tournament'}
+          error={cancelError}
+          pending={Boolean(tournamentPendingCancel && pendingActions.has(`cancel:${tournamentPendingCancel}`))}
+          onClose={() => {
+            if (!tournamentPendingCancel || !pendingActions.has(`cancel:${tournamentPendingCancel}`)) setTournamentPendingCancel(null);
+          }}
+          onConfirm={() => void confirmCancelTournament()}
+        />
       </div>
     );
   }
@@ -1090,7 +1137,7 @@ export default function Tournaments() {
             className="btn-primary-create"
             onClick={() => {
               if (!isAuthenticated) openAuthModal();
-              else setShowCreateModal(true);
+              else { setCreateError(null); setShowCreateModal(true); }
             }}
           >
             <Swords size={17} aria-hidden="true" /> Create Tournament
@@ -1112,26 +1159,37 @@ export default function Tournaments() {
           <button
             className={`tournaments-tab-btn ${activeFilter === 'all' ? 'active' : ''}`}
             onClick={() => setActiveFilter('all')}
+            aria-pressed={activeFilter === 'all'}
           >
             All ({tournaments.length})
           </button>
           <button
             className={`tournaments-tab-btn ${activeFilter === 'registration' ? 'active' : ''}`}
             onClick={() => setActiveFilter('registration')}
+            aria-pressed={activeFilter === 'registration'}
           >
             Registration Open
           </button>
           <button
             className={`tournaments-tab-btn ${activeFilter === 'in_progress' ? 'active' : ''}`}
             onClick={() => setActiveFilter('in_progress')}
+            aria-pressed={activeFilter === 'in_progress'}
           >
             In Progress
           </button>
           <button
             className={`tournaments-tab-btn ${activeFilter === 'completed' ? 'active' : ''}`}
             onClick={() => setActiveFilter('completed')}
+            aria-pressed={activeFilter === 'completed'}
           >
             Completed
+          </button>
+          <button
+            className={`tournaments-tab-btn ${activeFilter === 'cancelled' ? 'active' : ''}`}
+            onClick={() => setActiveFilter('cancelled')}
+            aria-pressed={activeFilter === 'cancelled'}
+          >
+            Cancelled
           </button>
         </div>
 
@@ -1140,6 +1198,7 @@ export default function Tournaments() {
           <input
             type="text"
             placeholder="Search tournaments…"
+            aria-label="Search tournaments"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -1153,6 +1212,14 @@ export default function Tournaments() {
         <div className="tournaments-toast error" role="alert">
           <span>{listError}</span>
           <button onClick={() => setListRefreshVersion((version) => version + 1)}>Retry</button>
+        </div>
+      )}
+
+      {listState === 'success' && (
+        <div className="tournament-result-count" role="status">
+          {filteredTournaments.length === tournaments.length
+            ? `${tournaments.length} tournament${tournaments.length === 1 ? '' : 's'}`
+            : `${filteredTournaments.length} shown · ${tournaments.length} total`}
         </div>
       )}
 
@@ -1175,22 +1242,15 @@ export default function Tournaments() {
       ) : filteredTournaments.length === 0 ? (
         <div className="tournaments-empty">
           <div className="tournaments-empty-icon"><Trophy aria-hidden="true" /></div>
-          <h3>No tournaments found</h3>
-          <p>
-            {activeFilter !== 'all' || searchQuery
-              ? 'Try adjusting your filters or search keywords.'
-              : 'Be the first Hunter to host a coding tournament!'}
-          </p>
-          <button
-            className="btn-primary-create"
-            style={{ marginTop: '16px' }}
-            onClick={() => {
-              if (!isAuthenticated) openAuthModal();
-              else setShowCreateModal(true);
-            }}
-          >
-            Host a Tournament
-          </button>
+          <h3>{activeFilter !== 'all' || searchQuery ? 'No matching tournaments' : 'No tournaments yet'}</h3>
+          <p>{activeFilter !== 'all' || searchQuery
+            ? 'No tournaments match the current search and status filter.'
+            : 'There are no tournaments in the list yet.'}</p>
+          {activeFilter !== 'all' || searchQuery ? (
+            <button type="button" className="btn-secondary" onClick={() => { setActiveFilter('all'); setSearchQuery(''); }}>Clear search and filters</button>
+          ) : (
+            <button type="button" className="btn-primary-create" onClick={() => { if (!isAuthenticated) openAuthModal(); else { setCreateError(null); setShowCreateModal(true); } }}>Host a Tournament</button>
+          )}
         </div>
       ) : (
         <div className="tournaments-grid">
@@ -1202,7 +1262,7 @@ export default function Tournaments() {
               <div key={t.id} className="tournament-card">
                 <div>
                   <div className="tournament-card-header">
-                    <div>
+                    <div className="tournament-card-heading">
                       <div className="tournament-card-title">{t.title}</div>
                       <div className="tournament-card-desc">
                         {t.description || 'No tournament description provided.'}
@@ -1224,6 +1284,11 @@ export default function Tournaments() {
                       <span className="tournament-flag creator">Created by you</span>
                     </div>
                   )}
+                  {t.isRegistered && !t.isCreator && (
+                    <div className="tournament-card-flags" aria-label="Your tournament status">
+                      <span className="tournament-flag participant"><CheckCircle2 size={13} aria-hidden="true" /> Registered</span>
+                    </div>
+                  )}
 
                   {/* Card Meta Box */}
                   <div className="tournament-card-meta" style={{ marginTop: '14px' }}>
@@ -1239,6 +1304,10 @@ export default function Tournaments() {
                       <span className="meta-label">Bracket Format</span>
                       <span className="meta-value">{t.totalRounds} Rounds Single Elimination</span>
                     </div>
+                    {t.startTime && <div className="meta-row">
+                      <span className="meta-label">Starts</span>
+                      <span className="meta-value tournament-start-value"><CalendarDays size={14} aria-hidden="true" /> {formatTournamentStart(t.startTime)}</span>
+                    </div>}
 
                     {t.rewards?.firstPlace && (typeof t.rewards.firstPlace.xp === 'number' || t.rewards.firstPlace.title) && (
                       <div className="meta-row">
@@ -1301,6 +1370,7 @@ export default function Tournaments() {
         >
             <form onSubmit={handleCreateSubmit}>
               <div className="modal-body">
+                {createError && <p className="tournament-form-error" role="alert">{createError}</p>}
                 <div className="form-group">
                   <label htmlFor="tournament-name">Tournament Name *</label>
                   <input
@@ -1402,19 +1472,6 @@ export default function Tournaments() {
             </form>
         </Modal>
       )}
-      <Modal
-        open={Boolean(tournamentPendingCancel)}
-        title="Cancel tournament?"
-        description="This will cancel the tournament for all registered participants. This action cannot be undone."
-        onClose={() => { if (!tournamentPendingCancel || !pendingActions.has(`cancel:${tournamentPendingCancel}`)) setTournamentPendingCancel(null); }}
-      >
-        <div className="modal-footer">
-          <button type="button" className="btn-secondary" onClick={() => setTournamentPendingCancel(null)} disabled={Boolean(tournamentPendingCancel && pendingActions.has(`cancel:${tournamentPendingCancel}`))}>Keep tournament</button>
-          <button type="button" className="btn-action-cancel" onClick={() => void confirmCancelTournament()} disabled={!tournamentPendingCancel || pendingActions.has(`cancel:${tournamentPendingCancel ?? ''}`)}>
-            {tournamentPendingCancel && pendingActions.has(`cancel:${tournamentPendingCancel}`) ? <><LoaderCircle className="spinning-icon" size={16} aria-hidden="true" /> Cancelling…</> : 'Cancel tournament'}
-          </button>
-        </div>
-      </Modal>
     </div>
   );
 }

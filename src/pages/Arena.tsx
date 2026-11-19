@@ -1,6 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
-import { Trophy } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  BookOpenText,
+  Clock3,
+  Flag,
+  FlaskConical,
+  Laptop,
+  LockKeyhole,
+  Medal,
+  Play,
+  Rocket,
+  Settings2,
+  Shield,
+  Swords,
+  Trophy,
+  X,
+  Zap,
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import CodeEditor from '../components/editor/CodeEditor';
 import { pythonChallenges } from '../data/challenges';
@@ -873,7 +891,7 @@ function ArenaMatchWorkspace({
         {/* Combatant 1: You */}
         <div className="arena-hud-combatant you">
           <div className="arena-hud-avatar" style={{ borderColor: yourDivInfo.color }}>
-            <span>{yourDivInfo.icon}</span>
+            <span>{match.matchType === 'tournament' ? <Shield size={20} aria-hidden="true" /> : yourDivInfo.icon}</span>
           </div>
           <div className="arena-hud-meta">
             <div className="arena-hud-name-row">
@@ -897,7 +915,7 @@ function ArenaMatchWorkspace({
         {/* Center: Timer & Status */}
         <div className="arena-hud-center">
           <div className={`arena-hud-timer-card ${isUrgent ? 'urgent' : ''} ${isExpired ? 'expired' : ''}`}>
-            <span className="arena-hud-timer-icon">⏱️</span>
+            <span className="arena-hud-timer-icon">{match.matchType === 'tournament' ? <Clock3 size={16} aria-hidden="true" /> : '⏱️'}</span>
             <span className="arena-hud-timer-digits">{timerStr}</span>
           </div>
           <div className="arena-hud-match-meta">
@@ -908,7 +926,7 @@ function ArenaMatchWorkspace({
             <span className="arena-hud-match-id">Match #{match.id.slice(0, 8)}</span>
             {match.matchType === 'tournament' && (
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem', color: '#fbbf24', background: 'rgba(245, 158, 11, 0.15)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(245, 158, 11, 0.35)', marginTop: '4px' }}>
-                <span>🏆</span>
+                <Trophy size={14} aria-hidden="true" />
                 <span>{match.tournamentContext?.tournamentTitle || 'Tournament Duel'}</span>
                 {match.tournamentContext?.round && (
                   <span>· R{match.tournamentContext.round}</span>
@@ -937,7 +955,7 @@ function ArenaMatchWorkspace({
             </div>
           </div>
           <div className="arena-hud-avatar" style={{ borderColor: oppDivInfo.color }}>
-            <span>{oppDivInfo.icon}</span>
+            <span>{match.matchType === 'tournament' ? <Shield size={20} aria-hidden="true" /> : oppDivInfo.icon}</span>
           </div>
 
           <div className="arena-hud-actions">
@@ -948,7 +966,7 @@ function ArenaMatchWorkspace({
                 onClick={() => navigate(match.tournamentContext?.tournamentId ? `/tournaments/${match.tournamentContext.tournamentId}` : '/tournaments')}
                 title="Return to Tournament Details"
               >
-                ← Tournament
+                <><ArrowLeft size={15} aria-hidden="true" /> Tournament</>
               </button>
             )}
             {match.status === 'ready' && attemptsCount === 0 && onCancelMatch && (
@@ -958,7 +976,7 @@ function ArenaMatchWorkspace({
                 onClick={() => setShowCancelConfirm(true)}
                 title="Cancel Untouched Match (No rating penalty)"
               >
-                ✕ Cancel Match
+                {match.matchType === 'tournament' ? <><X size={15} aria-hidden="true" /> Cancel Match</> : '✕ Cancel Match'}
               </button>
             )}
             {!isConcluded && (
@@ -968,7 +986,7 @@ function ArenaMatchWorkspace({
                 onClick={() => setShowForfeitConfirm(true)}
                 title="Surrender Duel"
               >
-                🏳️ Forfeit
+                {match.matchType === 'tournament' ? <><Flag size={15} aria-hidden="true" /> Forfeit</> : '🏳️ Forfeit'}
               </button>
             )}
           </div>
@@ -987,21 +1005,21 @@ function ArenaMatchWorkspace({
               className={`arena-tab-btn ${leftTab === 'problem' ? 'active' : ''}`}
               onClick={() => setLeftTab('problem')}
             >
-              📜 Problem Statement
+              {match.matchType === 'tournament' ? <><BookOpenText size={15} aria-hidden="true" /> Problem Statement</> : '📜 Problem Statement'}
             </button>
             <button
               type="button"
               className={`arena-tab-btn ${leftTab === 'samples' ? 'active' : ''}`}
               onClick={() => setLeftTab('samples')}
             >
-              🧪 Sample Tests ({match.challenge.sampleTests?.length || 0})
+              {match.matchType === 'tournament' ? <><FlaskConical size={15} aria-hidden="true" /> Sample Tests ({match.challenge.sampleTests?.length || 0})</> : `🧪 Sample Tests (${match.challenge.sampleTests?.length || 0})`}
             </button>
             <button
               type="button"
               className={`arena-tab-btn ${leftTab === 'requirements' ? 'active' : ''}`}
               onClick={() => setLeftTab('requirements')}
             >
-              ⚙️ Constraints
+              {match.matchType === 'tournament' ? <><Settings2 size={15} aria-hidden="true" /> Constraints</> : '⚙️ Constraints'}
             </button>
           </div>
 
@@ -1020,7 +1038,7 @@ function ArenaMatchWorkspace({
                 {/* Lore / Story intro if present */}
                 {challengeInfo?.storyIntro && (
                   <div className="arena-story-callout">
-                    <div className="arena-story-icon">⚔️</div>
+                    <div className="arena-story-icon">{match.matchType === 'tournament' ? <Swords size={19} aria-hidden="true" /> : '⚔️'}</div>
                     <blockquote className="arena-story-text">{challengeInfo.storyIntro}</blockquote>
                   </div>
                 )}
@@ -1095,7 +1113,7 @@ function ArenaMatchWorkspace({
                     ))
                   ) : (
                     <div className="arena-empty-inline">
-                      <span>🧪</span>
+                      <span>{match.matchType === 'tournament' ? <FlaskConical size={17} aria-hidden="true" /> : '🧪'}</span>
                       <p>No sample test cases defined for this challenge.</p>
                     </div>
                   )}
@@ -1165,7 +1183,7 @@ function ArenaMatchWorkspace({
                     <div className="arena-spinner-xs" /> Running Tests…
                   </>
                 ) : (
-                  '▶ Run Sample Tests'
+                  match.matchType === 'tournament' ? <><Play size={15} aria-hidden="true" /> Run Sample Tests</> : '▶ Run Sample Tests'
                 )}
               </button>
 
@@ -1181,7 +1199,7 @@ function ArenaMatchWorkspace({
                     <div className="arena-spinner-xs" /> Submitting…
                   </>
                 ) : (
-                  '🚀 Submit Solution'
+                  match.matchType === 'tournament' ? <><Rocket size={15} aria-hidden="true" /> Submit Solution</> : '🚀 Submit Solution'
                 )}
               </button>
             </div>
@@ -1199,7 +1217,7 @@ function ArenaMatchWorkspace({
 
             {isEditorLocked && (
               <div className="arena-editor-lock-banner">
-                <span className="arena-lock-icon">🔒</span>
+                <span className="arena-lock-icon">{match.matchType === 'tournament' ? <LockKeyhole size={15} aria-hidden="true" /> : '🔒'}</span>
                 <span>
                   {isPlayerCompleted
                     ? 'Solution finalized — all test cases successfully passed!'
@@ -1253,7 +1271,7 @@ function ArenaMatchWorkspace({
 
               {sampleRunResult?.durationMs !== undefined && (
                 <span className="arena-execution-time">
-                  ⚡ {sampleRunResult.durationMs}ms
+                  {match.matchType === 'tournament' ? <Zap size={14} aria-hidden="true" /> : '⚡'} {sampleRunResult.durationMs}ms
                 </span>
               )}
             </div>
@@ -1322,7 +1340,7 @@ function ArenaMatchWorkspace({
                     </div>
                   ) : (
                     <div className="arena-results-empty">
-                      <span>▶️</span>
+                      <span>{match.matchType === 'tournament' ? <Play size={17} aria-hidden="true" /> : '▶️'}</span>
                       <p>Run sample tests to verify your algorithm against visible cases.</p>
                     </div>
                   )}
@@ -1341,7 +1359,9 @@ function ArenaMatchWorkspace({
                     <div className="arena-submission-result-box">
                       <div className={`arena-submission-banner ${submitResult.allPassed ? 'victory' : 'partial'}`}>
                         <div className="arena-sub-banner-icon">
-                          {submitResult.allPassed ? '🏆' : '⚠️'}
+                          {match.matchType === 'tournament'
+                            ? submitResult.allPassed ? <Trophy size={19} aria-hidden="true" /> : <AlertTriangle size={19} aria-hidden="true" />
+                            : submitResult.allPassed ? '🏆' : '⚠️'}
                         </div>
                         <div>
                           <h4>
@@ -1385,7 +1405,7 @@ function ArenaMatchWorkspace({
                     </div>
                   ) : (
                     <div className="arena-results-empty">
-                      <span>🚀</span>
+                      <span>{match.matchType === 'tournament' ? <Rocket size={17} aria-hidden="true" /> : '🚀'}</span>
                       <p>No official submission made yet. Submit when ready to test against full criteria.</p>
                     </div>
                   )}
@@ -1402,7 +1422,7 @@ function ArenaMatchWorkspace({
                     </div>
                   ) : (
                     <div className="arena-results-empty">
-                      <span>💻</span>
+                      <span>{match.matchType === 'tournament' ? <Laptop size={17} aria-hidden="true" /> : '💻'}</span>
                       <p>No stdout printed. Use print() in Python to inspect internal variables.</p>
                     </div>
                   )}
@@ -1419,7 +1439,7 @@ function ArenaMatchWorkspace({
       {showForfeitConfirm && (
         <div className="arena-modal-backdrop animate-fadeIn" role="dialog" aria-modal="true" aria-labelledby="forfeit-title" aria-describedby="forfeit-description">
           <div className="arena-modal-card">
-            <div className="arena-modal-icon-badge danger">⚠️</div>
+            <div className="arena-modal-icon-badge danger">{match.matchType === 'tournament' ? <AlertTriangle size={20} aria-hidden="true" /> : '⚠️'}</div>
             <h3 id="forfeit-title">Surrender Duel?</h3>
             <p id="forfeit-description">
               Forfeiting will immediately concede victory to your opponent.
@@ -1453,7 +1473,7 @@ function ArenaMatchWorkspace({
       {showCancelConfirm && (
         <div className="arena-modal-backdrop animate-fadeIn" role="dialog" aria-modal="true" aria-labelledby="cancel-match-title" aria-describedby="cancel-match-description">
           <div className="arena-modal-card">
-            <div className="arena-modal-icon-badge warning">✕</div>
+            <div className="arena-modal-icon-badge warning">{match.matchType === 'tournament' ? <X size={20} aria-hidden="true" /> : '✕'}</div>
             <h3 id="cancel-match-title">Cancel Untouched Match?</h3>
             <p id="cancel-match-description">
               This duel has not started yet. Cancelling will safely close this match session
@@ -1561,7 +1581,7 @@ function ArenaMatchWorkspace({
 
               {hasDivisionChanged && (
                 <div className="arena-res-division-alert">
-                  <span>🎖️</span>
+                  {match.matchType === 'tournament' ? <Medal size={16} aria-hidden="true" /> : <span>🎖️</span>}
                   <strong>
                     {resultRatingDelta > 0
                       ? `PROMOTED TO ${divAfter.toUpperCase()} DIVISION!`
@@ -1577,12 +1597,12 @@ function ArenaMatchWorkspace({
               <div className="arena-result-rewards-chips">
                 {matchResult.rewards.hunterXp > 0 && (
                   <div className="arena-res-reward-chip">
-                    <span className="arena-reward-chip-icon">⚡</span>
+                    <span className="arena-reward-chip-icon">{match.matchType === 'tournament' ? <Zap size={15} aria-hidden="true" /> : '⚡'}</span>
                     <span>+{matchResult.rewards.hunterXp} Hunter XP</span>
                   </div>
                 )}
                 {matchResult.rewards.seasonXp > 0 && <div className="arena-res-reward-chip">
-                  <span className="arena-reward-chip-icon">🏆</span>
+                  <span className="arena-reward-chip-icon">{match.matchType === 'tournament' ? <Trophy size={15} aria-hidden="true" /> : '🏆'}</span>
                   <span>+{matchResult.rewards.seasonXp} Season XP</span>
                 </div>}
               </div>
