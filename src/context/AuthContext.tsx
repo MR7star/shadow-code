@@ -24,17 +24,29 @@ export interface AuthContextValue {
 
 const AUTH_TOKEN_KEY = 'shadow_code_auth_token_v2';
 
+function readStoredToken(): string | null {
+  try {
+    return localStorage.getItem(AUTH_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function persistToken(token: string | null): void {
+  try {
+    if (token) localStorage.setItem(AUTH_TOKEN_KEY, token);
+    else localStorage.removeItem(AUTH_TOKEN_KEY);
+  } catch (error) {
+    // Storage can be disabled or full; keep the current in-memory session usable.
+    console.warn('Unable to persist authentication token:', error);
+  }
+}
+
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [token, setToken] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem(AUTH_TOKEN_KEY);
-    } catch {
-      return null;
-    }
-  });
+  const [token, setToken] = useState<string | null>(readStoredToken);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
 
@@ -43,7 +55,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let isMounted = true;
 
     async function restoreSession() {
-      const storedToken = localStorage.getItem(AUTH_TOKEN_KEY);
+      const storedToken = readStoredToken();
       if (!storedToken) {
         if (isMounted) setIsLoading(false);
         return;
@@ -62,7 +74,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         } else {
           // Token expired or invalid
-          localStorage.removeItem(AUTH_TOKEN_KEY);
+          persistToken(null);
           if (isMounted) {
             setUser(null);
             setToken(null);
@@ -100,13 +112,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, error: 'Invalid response from authentication server.' };
       }
 
-      localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+      persistToken(data.token);
       setToken(data.token);
       setUser(data.user);
       setAuthModalOpen(false);
       return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err.message || 'Network error during login.' };
+    } catch (err: unknown) {
+      return { success: false, error: err instanceof Error ? err.message : 'Network error during login.' };
     }
   };
 
@@ -126,13 +138,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, error: 'Invalid response from authentication server.' };
       }
 
-      localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+      persistToken(data.token);
       setToken(data.token);
       setUser(data.user);
       setAuthModalOpen(false);
       return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err.message || 'Network error during registration.' };
+    } catch (err: unknown) {
+      return { success: false, error: err instanceof Error ? err.message : 'Network error during registration.' };
     }
   };
 
@@ -151,7 +163,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.warn(e);
       }
     }
-    localStorage.removeItem(AUTH_TOKEN_KEY);
+    persistToken(null);
     setToken(null);
     setUser(null);
   };

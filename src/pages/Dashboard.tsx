@@ -3,38 +3,19 @@ import { Link } from 'react-router-dom';
 import { useProgression } from '../context/ProgressionContext';
 import { useAuth } from '../context/AuthContext';
 import type { AchievementsResponse, ActivityEntry, PlayerStats, Rank } from '../types';
+import { AppIcon, type AppIconName } from '../components/ui/AppIcon';
 import './Dashboard.css';
 
-type IconName = 'activity' | 'award' | 'book' | 'bolt' | 'brain' | 'check' | 'chevron' | 'clock' | 'code' | 'crosshair' | 'flame' | 'gift' | 'lock' | 'swords' | 'users' | 'shield' | 'target';
+type IconName = AppIconName;
 
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
-  const common = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
-  const glyphs: Record<IconName, React.ReactNode> = {
-    activity: <><path {...common} d="M3 12h4l3-8 4 16 3-8h4" /></>,
-    award: <><circle {...common} cx="12" cy="8" r="6" /><path {...common} d="m8.2 13-1.1 8 4.9-2.7 4.9 2.7-1.1-8" /></>,
-    book: <><path {...common} d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v17H6.5A2.5 2.5 0 0 1 4 17.5z" /><path {...common} d="M4 17.5A2.5 2.5 0 0 1 6.5 15H20M8 7h8" /></>,
-    bolt: <><path {...common} d="m13 2-3 8h7l-6 12 1-9H6z" /></>,
-    brain: <><path {...common} d="M12 18V5a3 3 0 0 0-5.8-1.1A4 4 0 0 0 4 11a4 4 0 0 0 3 7h5ZM12 18V5a3 3 0 0 1 5.8-1.1A4 4 0 0 1 20 11a4 4 0 0 1-3 7h-5Z" /></>,
-    check: <><path {...common} d="m5 12 4 4L19 6" /></>,
-    chevron: <><path {...common} d="m9 18 6-6-6-6" /></>,
-    clock: <><circle {...common} cx="12" cy="12" r="9" /><path {...common} d="M12 7v5l3 2" /></>,
-    code: <><path {...common} d="m8 8-4 4 4 4M16 8l4 4-4 4m-2-10-4 12" /></>,
-    crosshair: <><circle {...common} cx="12" cy="12" r="9" /><circle {...common} cx="12" cy="12" r="3" /><path {...common} d="M12 2v2m0 16v2M2 12h2m16 0h2" /></>,
-    flame: <><path {...common} d="M12 22a7 7 0 0 0 7-7c0-4-3-6-3-10-2 1-3 3-3 5-2-2-3-5-3-8-3 3-5 7-5 12a7 7 0 0 0 7 8Z" /><path {...common} d="M10 16a2 2 0 0 0 4 0c0-1-1-2-2-3-1 1-2 2-2 3Z" /></>,
-    gift: <><path {...common} d="M20 12v10H4V12m-2-5h20v5H2zm10 0v15" /><path {...common} d="M12 7H7.5a2.5 2.5 0 1 1 2.4-3.2L12 7Zm0 0h4.5a2.5 2.5 0 1 0-2.4-3.2L12 7Z" /></>,
-    lock: <><rect {...common} x="4" y="10" width="16" height="11" rx="2" /><path {...common} d="M8 10V7a4 4 0 0 1 8 0v3" /></>,
-    swords: <><path {...common} d="m14.5 5.5 4-4 3 3-4 4M3 21l7-7m-4-4 4-4 11 11-4 4L6 10Zm0 0-4-4 3-3 4 4" /></>,
-    users: <><path {...common} d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2m16 0v-2a4 4 0 0 0-3-3.9M14 3.1a4 4 0 0 1 0 7.8" /><circle {...common} cx="10" cy="7" r="4" /></>,
-    shield: <><path {...common} d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z" /><path {...common} d="m9 12 2 2 4-4" /></>,
-    target: <><circle {...common} cx="12" cy="12" r="9" /><circle {...common} cx="12" cy="12" r="5" /><circle {...common} cx="12" cy="12" r="1" /></>,
-  };
-  return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24">{glyphs[name]}</svg>;
+  return <AppIcon name={name} size={size} />;
 }
 
 const statConfig: { key: keyof PlayerStats; label: string; icon: IconName; color: string }[] = [
   { key: 'strength', label: 'Strength', icon: 'swords', color: 'var(--dash-red)' },
   { key: 'intelligence', label: 'Intelligence', icon: 'brain', color: 'var(--dash-violet)' },
-  { key: 'agility', label: 'Agility', icon: 'bolt', color: 'var(--dash-cyan)' },
+  { key: 'agility', label: 'Agility', icon: 'zap', color: 'var(--dash-cyan)' },
   { key: 'vitality', label: 'Vitality', icon: 'flame', color: 'var(--dash-gold)' },
   { key: 'perception', label: 'Perception', icon: 'crosshair', color: 'var(--dash-blue)' },
   { key: 'endurance', label: 'Endurance', icon: 'shield', color: 'var(--dash-green)' },
@@ -82,7 +63,7 @@ function formatTimeAgo(timestamp: string): string | null {
 }
 
 function activityIcon(type: ActivityEntry['type']): IconName {
-  if (type === 'level-up') return 'bolt';
+  if (type === 'level-up') return 'zap';
   if (type === 'achievement') return 'award';
   if (type === 'skill') return 'book';
   if (type === 'streak') return 'flame';
@@ -215,13 +196,13 @@ export default function Dashboard() {
             <Link className="hero-guild" to={`/guilds/${player.guild.id}`}>
               <span className="hero-guild-icon">{player.guild.emblem || <Icon name="shield" size={19} />}</span>
               <span><strong>{player.guild.name}</strong><small>{player.guild.role} · {player.guild.rank}</small></span>
-              <Icon name="chevron" size={16} />
+              <Icon name="arrowRight" size={16} />
             </Link>
           ) : (
             <Link className="hero-guild hero-guild-empty" to="/guilds">
               <span className="hero-guild-icon"><Icon name="users" size={18} /></span>
               <span><strong>Find an alliance</strong><small>Join a Hunter guild</small></span>
-              <Icon name="chevron" size={16} />
+              <Icon name="arrowRight" size={16} />
             </Link>
           )}
           <div className="hero-sync-note"><span className={isSyncing ? 'sync-dot syncing' : 'sync-dot'} /> {isAuthenticated ? isSyncing ? 'Syncing hunter record' : 'Hunter record synced' : 'Preview profile'}</div>
@@ -231,9 +212,9 @@ export default function Dashboard() {
       <section className="status-strip" aria-label="Hunter statistics">
         <div className="status-strip-heading"><span className="status-strip-marker" /> STATUS</div>
         <div className="status-metric"><span className="status-metric-icon violet"><Icon name="check" /></span><span><strong>{player.questsCompleted.toLocaleString()}</strong><small>Quests cleared</small></span></div>
-        <div className="status-metric"><span className="status-metric-icon cyan"><Icon name="bolt" /></span><span><strong>{player.skillsUnlocked}<i>/{player.totalSkills}</i></strong><small>Skills unlocked</small></span></div>
+        <div className="status-metric"><span className="status-metric-icon cyan"><Icon name="zap" /></span><span><strong>{player.skillsUnlocked}<i>/{player.totalSkills}</i></strong><small>Skills unlocked</small></span></div>
         <div className="status-metric"><span className="status-metric-icon gold"><Icon name="flame" /></span><span><strong>{player.streak}<i> days</i></strong><small>Current streak</small></span></div>
-        <Link className="status-metric status-metric-link" to="/achievements"><span className="status-metric-icon purple"><Icon name="award" /></span><span><strong>{achievementSummary ? `${achievementSummary.unlocked}/${achievementSummary.total}` : '—'}</strong><small>Achievements</small></span><Icon name="chevron" size={15} /></Link>
+        <Link className="status-metric status-metric-link" to="/achievements"><span className="status-metric-icon purple"><Icon name="award" /></span><span><strong>{achievementSummary ? `${achievementSummary.unlocked}/${achievementSummary.total}` : '—'}</strong><small>Achievements</small></span><Icon name="arrowRight" size={15} /></Link>
         <div className="status-rank"><span>HUNTER RANK</span><strong style={{ color: rankTint }}>{player.rank}</strong></div>
       </section>
 
@@ -283,7 +264,7 @@ export default function Dashboard() {
             <p>{visibleDailyData?.chest.status === 'available' ? 'Your reward is ready to claim.' : visibleDailyData?.chest.status === 'claimed' ? 'Today’s supply has been collected.' : dailyQuestRequest.status === 'error' ? 'Retry the mission request to check cache eligibility.' : 'Clear every mission to unlock the reward.'}</p>
             <button type="button" className="cache-claim" disabled={visibleDailyData?.chest.status !== 'available' || claimingChest} onClick={() => void handleClaimChest()}>
               {claimingChest ? 'Claiming…' : visibleDailyData?.chest.status === 'claimed' ? 'Collected' : 'Claim reward'}
-              {!claimingChest && <Icon name={visibleDailyData?.chest.status === 'claimed' ? 'check' : 'chevron'} size={16} />}
+              {!claimingChest && <Icon name={visibleDailyData?.chest.status === 'claimed' ? 'check' : 'arrowRight'} size={16} />}
             </button>
             {claimMessage && <span className="cache-feedback" role="status">{claimMessage}</span>}
             {visibleDailyData && <span className="cache-streak"><Icon name="flame" size={14} /> Longest streak <strong>{visibleDailyData.streak.longest_streak} days</strong></span>}
@@ -306,7 +287,7 @@ export default function Dashboard() {
               ))}
             </ol>
           ) : (
-            <div className="activity-empty"><span className="activity-empty-icon"><Icon name="activity" size={23} /></span><strong>No session activity yet</strong><p>{isAuthenticated ? 'Completed challenges and level-ups from this session will appear here.' : 'Complete a preview quest to begin your field log.'}</p><Link to="/quests" className="text-action">Browse quests <Icon name="chevron" size={14} /></Link></div>
+            <div className="activity-empty"><span className="activity-empty-icon"><Icon name="activity" size={23} /></span><strong>No session activity yet</strong><p>{isAuthenticated ? 'Completed challenges and level-ups from this session will appear here.' : 'Complete a preview quest to begin your field log.'}</p><Link to="/quests" className="text-action">Browse quests <Icon name="arrowRight" size={14} /></Link></div>
           )}
         </div>
 
@@ -320,14 +301,14 @@ export default function Dashboard() {
               </div>
             ))}
           </div>
-          <Link className="attributes-footer" to="/profile">View hunter profile <Icon name="chevron" size={15} /></Link>
+          <Link className="attributes-footer" to="/profile">View hunter profile <Icon name="arrowRight" size={15} /></Link>
         </div>
       </section>
 
       <nav className="dash-quick-nav" aria-label="More hunter actions">
-        <Link to="/dungeons"><Icon name="shield" size={16} /><span>Enter a dungeon</span><Icon name="chevron" size={14} /></Link>
-        <Link to="/guilds"><Icon name="users" size={16} /><span>Hunter guilds</span><Icon name="chevron" size={14} /></Link>
-        <Link to="/achievements"><Icon name="award" size={16} /><span>Achievement archive</span><Icon name="chevron" size={14} /></Link>
+        <Link to="/dungeons"><Icon name="shield" size={16} /><span>Enter a dungeon</span><Icon name="arrowRight" size={14} /></Link>
+        <Link to="/guilds"><Icon name="users" size={16} /><span>Hunter guilds</span><Icon name="arrowRight" size={14} /></Link>
+        <Link to="/achievements"><Icon name="award" size={16} /><span>Achievement archive</span><Icon name="arrowRight" size={14} /></Link>
       </nav>
     </div>
   );

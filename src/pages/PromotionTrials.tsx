@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useProgression } from '../context/ProgressionContext';
+import { useAuth } from '../context/AuthContext';
+import { Button, EmptyState, ErrorState, LoadingState } from '../components/ui';
 import CodeEditor from '../components/editor/CodeEditor';
+import { AppIcon } from '../components/ui/AppIcon';
 import type { PromotionTrialEligibility } from '../types';
 import './PromotionTrials.css';
 
@@ -30,7 +33,8 @@ function getRankColor(rank: string): string {
 }
 
 export default function PromotionTrials() {
-  const { player, promotionTrials, refreshPromotions, attemptPromotion } = useProgression();
+  const { player, promotionTrials, promotionTrialsRequest, refreshPromotions, attemptPromotion } = useProgression();
+  const { openAuthModal } = useAuth();
 
   const [selectedTrialId, setSelectedTrialId] = useState<string | null>(null);
   const [code, setCode] = useState('');
@@ -119,29 +123,54 @@ export default function PromotionTrials() {
         </div>
 
         <div className="promotion-trial-cards">
-          {promotionTrials.map((trial) => {
+          {promotionTrialsRequest.status === 'loading' ? (
+            <div className="promotion-trials-request-state">
+              <LoadingState label="Loading promotion trials" lines={3} />
+            </div>
+          ) : promotionTrialsRequest.status === 'error' ? (
+            <div className="promotion-trials-request-state">
+              <ErrorState
+                message={promotionTrialsRequest.message}
+                onRetry={() => { void refreshPromotions(); }}
+                retryLabel="Retry"
+              />
+            </div>
+          ) : promotionTrialsRequest.status === 'unauthenticated' ? (
+            <div className="promotion-trials-request-state">
+              <EmptyState
+                title="Sign in to view promotion trials"
+                description="Trial eligibility and progress are available after you sign in."
+                action={<Button onClick={openAuthModal}>Sign in</Button>}
+              />
+            </div>
+          ) : promotionTrialsRequest.status === 'empty' ? (
+            <div className="promotion-trials-request-state">
+              <EmptyState
+                title="No promotion trials available"
+                description="There are no promotion trials in your current progression data."
+              />
+            </div>
+          ) : promotionTrials.map((trial) => {
             const isCurrent = trial.fromRank === player.rank;
             const isLocked = trial.status === 'locked';
             const isCompleted = trial.status === 'completed';
             const available = isCurrent && trial.eligible && !isCompleted;
 
             return (
-              <div
+              <article
                 key={trial.id}
                 className={`promotion-trial-card ${isLocked ? 'locked' : available ? 'available' : 'completed'}`}
-                onClick={() => {
-                  if (available) setSelectedTrialId(trial.id);
-                }}
-                role="button"
-                tabIndex={available ? 0 : -1}
-                aria-label={`${trial.title} — ${isLocked ? 'locked' : isCompleted ? 'completed' : 'available'}`}
+                onClick={available ? (event) => {
+                  if (event.target instanceof Element && event.target.closest('button')) return;
+                  setSelectedTrialId(trial.id);
+                } : undefined}
               >
                 <div className="promotion-trial-header">
                   <div className="promotion-trial-rank-chip">
-                    {trial.fromRank} → {trial.toRank}
+                    {trial.fromRank} <AppIcon name="arrowRight" size={14} /> {trial.toRank}
                   </div>
                   <div className="promotion-trial-status-badge">
-                    {isLocked ? '🔒 Locked' : isCompleted ? '✅ Completed' : available ? '⚔️ Available' : 'Coming Soon'}
+                    {isLocked ? <><AppIcon name="lock" size={13} /> Locked</> : isCompleted ? <><AppIcon name="checkCircle" size={13} /> Completed</> : available ? <><AppIcon name="swords" size={13} /> Available</> : 'Coming Soon'}
                   </div>
                 </div>
                 <h3 className="promotion-trial-title">{trial.title}</h3>
@@ -151,19 +180,19 @@ export default function PromotionTrials() {
                   <div className="promotion-req">
                     <span>Level Requirement:</span>
                     <span className={trial.levelMet ? 'promotion-req-met' : 'promotion-req-unmet'}>
-                      {trial.levelMet ? '✓' : '✗'} Level {trial.requiredLevel}
+                      <AppIcon name={trial.levelMet ? 'checkCircle' : 'circleX'} size={14} /> Level {trial.requiredLevel}
                     </span>
                   </div>
                   <div className="promotion-req">
                     <span>Mastered Challenges:</span>
                     <span className={trial.challengesMet ? 'promotion-req-met' : 'promotion-req-unmet'}>
-                      {trial.challengesMet ? '✓' : '✗'}
+                      <AppIcon name={trial.challengesMet ? 'checkCircle' : 'circleX'} size={14} />
                     </span>
                   </div>
                   <div className="promotion-req">
                     <span>Concept Mastery:</span>
                     <span className={trial.conceptsMet ? 'promotion-req-met' : 'promotion-req-unmet'}>
-                      {trial.conceptsMet ? '✓' : '✗'}
+                      <AppIcon name={trial.conceptsMet ? 'checkCircle' : 'circleX'} size={14} />
                     </span>
                   </div>
                 </div>
@@ -181,23 +210,34 @@ export default function PromotionTrials() {
                     </span>
                   )}
                   {available && (
-                    <button
-                      type="button"
-                      className="promotion-trial-btn"
-                      onClick={() => setSelectedTrialId(trial.id)}
-                    >
-                      Attempt Trial
-                    </button>
+                    <div className="promotion-trial-actions">
+                      <button
+                        type="button"
+                        className="promotion-trial-card-action"
+                        onClick={() => setSelectedTrialId(trial.id)}
+                        aria-label={`View ${trial.title} trial details`}
+                      >
+                        View Trial
+                      </button>
+                      <button
+                        type="button"
+                        className="promotion-trial-btn"
+                        onClick={() => setSelectedTrialId(trial.id)}
+                        aria-label={`Attempt ${trial.title}`}
+                      >
+                        Attempt Trial
+                      </button>
+                    </div>
                   )}
                 </div>
-              </div>
+              </article>
             );
           })}
         </div>
       </section>
 
       {/* Trial Detail / Attempt Panel */}
-      {selectedTrial && (
+      {promotionTrialsRequest.status === 'success' && selectedTrial && (
         <div className="promotion-trial-detail">
           <button
             type="button"
@@ -208,13 +248,13 @@ export default function PromotionTrials() {
             }}
             aria-label="Close trial detail"
           >
-            ✕
+            <AppIcon name="x" size={16} />
           </button>
 
           <div className="promotion-detail-header">
             <h2>{selectedTrial.title}</h2>
             <span className="promotion-detail-rank">
-              {selectedTrial.fromRank} → {selectedTrial.toRank}
+              {selectedTrial.fromRank} <AppIcon name="arrowRight" size={14} /> {selectedTrial.toRank}
             </span>
           </div>
 
@@ -224,17 +264,17 @@ export default function PromotionTrials() {
             <h3>Trial Requirements</h3>
             <div className="promotion-req-checklist">
               <div className={`promotion-req-item ${selectedTrial.levelMet ? 'met' : 'unmet'}`}>
-                <span className="promotion-req-icon">{selectedTrial.levelMet ? '✓' : '○'}</span>
+                <span className="promotion-req-icon"><AppIcon name={selectedTrial.levelMet ? 'checkCircle' : 'circle'} size={14} /></span>
                 <span>Hunter Level {selectedTrial.requiredLevel} (current: {selectedTrial.currentLevel})</span>
               </div>
               <div className={`promotion-req-item ${selectedTrial.challengesMet ? 'met' : 'unmet'}`}>
-                <span className="promotion-req-icon">{selectedTrial.challengesMet ? '✓' : '○'}</span>
+                <span className="promotion-req-icon"><AppIcon name={selectedTrial.challengesMet ? 'checkCircle' : 'circle'} size={14} /></span>
                 <span>
                   Mastered: {selectedTrial.requiredMasteredChallenges.join(', ')}
                 </span>
               </div>
               <div className={`promotion-req-item ${selectedTrial.conceptsMet ? 'met' : 'unmet'}`}>
-                <span className="promotion-req-icon">{selectedTrial.conceptsMet ? '✓' : '○'}</span>
+                <span className="promotion-req-icon"><AppIcon name={selectedTrial.conceptsMet ? 'checkCircle' : 'circle'} size={14} /></span>
                 <span>
                   Concept Mastery: {Object.entries(selectedTrial.requiredConceptMastery).map(([c, l]) => `${c} Lv.${l}`).join(', ')}
                 </span>
@@ -267,7 +307,7 @@ export default function PromotionTrials() {
                 onClick={handleReset}
                 disabled={isRunning}
               >
-                ↺ Reset
+                <AppIcon name="reset" size={14} /> Reset
               </button>
               <button
                 type="button"
@@ -275,11 +315,11 @@ export default function PromotionTrials() {
                 onClick={() => handleAttempt(selectedTrial)}
                 disabled={isRunning || !selectedTrial.eligible}
               >
-                {isRunning ? '⏳ Evaluating...' : '⚔️ Attempt Promotion'}
+                {isRunning ? <><AppIcon name="hourglass" size={15} /> Evaluating...</> : <><AppIcon name="swords" size={15} /> Attempt Promotion</>}
               </button>
               {attemptResult && !attemptResult.success && (
                 <div className="promotion-attempt-error">
-                  <span>⚡ {attemptResult.error}</span>
+                  <span><AppIcon name="zap" size={14} /> {attemptResult.error}</span>
                 </div>
               )}
             </div>
@@ -291,11 +331,11 @@ export default function PromotionTrials() {
       {showSuccess && (
         <div className="promotion-success-overlay">
           <div className="promotion-success-card">
-            <div className="promotion-success-icon">🏆</div>
+            <div className="promotion-success-icon"><AppIcon name="trophy" size={28} /></div>
             <h2 className="promotion-success-title">PROMOTION GRANTED</h2>
             <div className="promotion-rank-change">
               <span className="promotion-rank-old">{showSuccess.trial.fromRank}</span>
-              <span className="promotion-rank-arrow">→</span>
+              <span className="promotion-rank-arrow"><AppIcon name="arrowRight" size={16} /></span>
               <span className="promotion-rank-new">{showSuccess.newRank}</span>
             </div>
             <p className="promotion-success-desc">

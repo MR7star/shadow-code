@@ -1,6 +1,6 @@
-import { useState, useEffect, type ReactNode } from 'react';
+import { useState, useEffect } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Trophy } from 'lucide-react';
+import { Award, Castle, Flame, Medal, Menu, Network, ScrollText, Shield, Sparkles, Swords, Trophy, UserRound, X, Zap, type LucideIcon } from 'lucide-react';
 import { useProgression } from '../../context/ProgressionContext';
 import { useAuth } from '../../context/AuthContext';
 import './Layout.css';
@@ -8,24 +8,24 @@ import './Layout.css';
 interface NavItem {
   path: string;
   label: string;
-  icon: ReactNode;
+  icon: LucideIcon;
   section: string;
   badge?: number;
 }
 
 const baseNavItems: NavItem[] = [
-  { path: '/', label: 'Dashboard', icon: '⚔️', section: 'main' },
-  { path: '/quests', label: 'Quest Board', icon: '📜', section: 'main' },
-  { path: '/dungeons', label: 'Dungeons', icon: '🏰', section: 'main' },
-  { path: '/guilds', label: 'Guilds', icon: '🛡️', section: 'main' },
-  { path: '/seasons', label: 'Seasons', icon: '✨', section: 'main' },
-  { path: '/arena', label: 'Ranked Arena', icon: '⚔️', section: 'main' },
-  { path: '/tournaments', label: 'Tournaments', icon: <Trophy size={18} aria-hidden="true" />, section: 'main' },
-  { path: '/skills', label: 'Skill Tree', icon: '🌟', section: 'main' },
-  { path: '/promotion', label: 'Promotion Trials', icon: '🏆', section: 'main' },
-  { path: '/achievements', label: 'Achievements', icon: '🎖️', section: 'player' },
-  { path: '/profile', label: 'Profile', icon: '👤', section: 'player' },
-  { path: '/leaderboard', label: 'Leaderboard', icon: '🏆', section: 'player' },
+  { path: '/', label: 'Dashboard', icon: Swords, section: 'main' },
+  { path: '/quests', label: 'Quest Board', icon: ScrollText, section: 'main' },
+  { path: '/dungeons', label: 'Dungeons', icon: Castle, section: 'main' },
+  { path: '/guilds', label: 'Guilds', icon: Shield, section: 'main' },
+  { path: '/seasons', label: 'Seasons', icon: Sparkles, section: 'main' },
+  { path: '/arena', label: 'Ranked Arena', icon: Swords, section: 'main' },
+  { path: '/tournaments', label: 'Tournaments', icon: Trophy, section: 'main' },
+  { path: '/skills', label: 'Skill Tree', icon: Network, section: 'main' },
+  { path: '/promotion', label: 'Promotion Trials', icon: Medal, section: 'main' },
+  { path: '/achievements', label: 'Achievements', icon: Award, section: 'player' },
+  { path: '/profile', label: 'Profile', icon: UserRound, section: 'player' },
+  { path: '/leaderboard', label: 'Leaderboard', icon: Trophy, section: 'player' },
 ];
 
 const pageTitles: Record<string, string> = {
@@ -88,10 +88,10 @@ export default function Layout() {
       />
 
       {/* Sidebar */}
-      <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
+      <aside id="primary-sidebar" className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-brand">
           <div className="sidebar-logo">
-            <div className="sidebar-logo-icon">⚡</div>
+            <div className="sidebar-logo-icon"><Zap size={21} strokeWidth={1.8} style={{ color: 'var(--accent-cyan)' }} aria-hidden="true" /></div>
             <div className="sidebar-logo-text">
               <h1>Shadow Code</h1>
               <span>Level Up Your Code</span>
@@ -109,7 +109,7 @@ export default function Layout() {
               className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
               onClick={() => setSidebarOpen(false)}
             >
-              <span className="nav-link-icon">{item.icon}</span>
+              <span className="nav-link-icon"><item.icon size={18} strokeWidth={1.8} aria-hidden="true" /></span>
               {item.label}
               {item.badge && <span className="nav-link-badge">{item.badge}</span>}
             </NavLink>
@@ -123,7 +123,7 @@ export default function Layout() {
               className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
               onClick={() => setSidebarOpen(false)}
             >
-              <span className="nav-link-icon">{item.icon}</span>
+              <span className="nav-link-icon"><item.icon size={18} strokeWidth={1.8} aria-hidden="true" /></span>
               {item.label}
             </NavLink>
           ))}
@@ -165,21 +165,28 @@ export default function Layout() {
       {/* Topbar */}
       <header className="topbar">
         <div className="topbar-left">
-          <button className="menu-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
-            ☰
+          <button
+            type="button"
+            className="menu-toggle"
+            onClick={() => setSidebarOpen((open) => !open)}
+            aria-label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
+            aria-expanded={sidebarOpen}
+            aria-controls="primary-sidebar"
+          >
+            <Menu size={22} strokeWidth={1.8} aria-hidden="true" />
           </button>
           <span className="topbar-title">{pageTitle}</span>
         </div>
 
         <div className="topbar-right">
           <div className="topbar-stat">
-            <span className="topbar-stat-icon">🔥</span>
+            <span className="topbar-stat-icon"><Flame size={16} strokeWidth={1.8} aria-hidden="true" /></span>
             <span className="topbar-stat-value">{player.streak}</span>
             <span>day streak</span>
           </div>
 
           <div className="topbar-stat">
-            <span className="topbar-stat-icon">⭐</span>
+            <span className="topbar-stat-icon"><Zap size={16} strokeWidth={1.8} aria-hidden="true" /></span>
             <span className="topbar-stat-value">Lv.{player.level}</span>
           </div>
 
@@ -188,16 +195,19 @@ export default function Layout() {
               <div className="topbar-xp-fill" style={{ width: `${xpPercent}%` }} />
             </div>
             <span className="topbar-xp-text">
+              <Zap size={13} strokeWidth={1.8} aria-hidden="true" />{' '}
               {player.xp}/{player.xpToNextLevel}
             </span>
           </div>
 
           {isAuthenticated ? (
             <button type="button" className="topbar-auth-btn" onClick={() => void logout()}>
+              <UserRound size={15} strokeWidth={1.8} aria-hidden="true" />
               Sign Out
             </button>
           ) : (
             <button type="button" className="topbar-auth-btn primary" onClick={openAuthModal}>
+              <UserRound size={15} strokeWidth={1.8} aria-hidden="true" />
               Sign In
             </button>
           )}
@@ -216,7 +226,7 @@ export default function Layout() {
         {showLevelUpToast && lastLevelUp && (
           <div className="level-up-toast" role="alert" aria-live="polite">
             <div className="level-up-toast-content">
-              <div className="level-up-toast-icon">⚡</div>
+              <div className="level-up-toast-icon"><Zap size={20} strokeWidth={1.8} style={{ color: 'var(--accent-cyan)' }} aria-hidden="true" /></div>
               <div className="level-up-toast-text">
                 <div className="level-up-toast-title">レベルアップ！LEVEL UP!</div>
                 <div className="level-up-toast-message">
@@ -229,7 +239,7 @@ export default function Layout() {
                 onClick={() => setShowLevelUpToast(false)}
                 aria-label="Close notification"
               >
-                ✕
+                <X size={15} strokeWidth={1.8} aria-hidden="true" />
               </button>
             </div>
           </div>

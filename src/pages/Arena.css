@@ -499,6 +499,11 @@
   gap: 20px;
 }
 
+.arena-overview > .arena-panel,
+.arena-find-match > .arena-panel {
+  margin-bottom: 0;
+}
+
 .arena-player-card {
   padding: 28px;
   background:

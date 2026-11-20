@@ -968,13 +968,16 @@
 }
 
 .bracket-round-column:not(:last-child)::after {
-  content: '›';
+  content: '';
   position: absolute;
   right: -18px;
   top: 50%;
   color: var(--accent-cyan);
-  font-size: 1.5rem;
-  font-weight: 700;
+  width: 8px;
+  height: 8px;
+  border-top: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+  transform: translateY(-50%) rotate(45deg);
 }
 
 .bracket-round-header {

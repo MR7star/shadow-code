@@ -2,9 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useProgression } from '../context/ProgressionContext';
 import {
-  Award, Brain, Castle, Check, Clock3, Code2, Crown, DoorOpen, Flame, Gift,
-  KeyRound, LockKeyhole, Medal, Orbit, ScrollText, Shield, Skull, Sparkles,
-  Star, Sword, Swords, Tags, Trophy, WandSparkles, Zap,
+  Castle, Check, Clock3, Code2, Flame, LockKeyhole, Medal, Sparkles, Star, Tags, Zap,
   type LucideIcon,
 } from 'lucide-react';
 import type {
@@ -16,6 +14,7 @@ import type {
   AchievementsResponse,
 } from '../types';
 import { EmptyState, ErrorState, LoadingState } from '../components/ui';
+import { AppIcon } from '../components/ui/AppIcon';
 import './Achievements.css';
 
 const CATEGORIES: { id: AchievementCategory; name: string; icon: LucideIcon }[] = [
@@ -26,31 +25,6 @@ const CATEGORIES: { id: AchievementCategory; name: string; icon: LucideIcon }[] 
   { id: 'consistency', name: 'Consistency', icon: Flame },
   { id: 'mastery', name: 'Mastery', icon: Star },
 ];
-
-const ACHIEVEMENT_ICONS: Record<string, LucideIcon> = {
-  ach_first_spell: WandSparkles,
-  ach_code_weaver: ScrollText,
-  ach_tenacious_coder: Zap,
-  ach_concept_master: Brain,
-  ach_omni_caster: Orbit,
-  ach_level_5: Sparkles,
-  ach_level_10: Shield,
-  ach_rank_d: Sword,
-  ach_rank_c: Swords,
-  ach_gate_explorer: DoorOpen,
-  ach_first_boss: Skull,
-  ach_awakening_gate: Castle,
-  ach_dungeon_master: Crown,
-  ach_streak_3: Flame,
-  ach_streak_7: Zap,
-  ach_daily_bounty: Gift,
-  ach_first_skill: Sparkles,
-  ach_skill_collector: KeyRound,
-  ach_promotion_trial: Trophy,
-  ach_grandmaster: Crown,
-  ach_tourn_contender: Swords,
-  ach_tourn_champion: Trophy,
-};
 
 function getRarityColor(rarity?: AchievementRarity): string {
   switch (rarity) {
@@ -77,6 +51,7 @@ export default function Achievements() {
   const [requestError, setRequestError] = useState<string | null>(null);
   const requestVersion = useRef(0);
   const [equippingTitle, setEquippingTitle] = useState<string | null>(null);
+  const [claimingAchievementId, setClaimingAchievementId] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const achievementStats = useMemo(() => {
     const total = achievements.length;
@@ -215,9 +190,10 @@ export default function Achievements() {
 
   // Handle explicit claim
   const handleClaimAchievement = async (achievementId: string) => {
-    if (!token) return;
+    if (!token || claimingAchievementId) return;
 
     try {
+      setClaimingAchievementId(achievementId);
       const res = await fetch(`/api/achievements/${achievementId}/claim`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
@@ -234,6 +210,7 @@ export default function Achievements() {
     } catch {
       setFeedbackMessage('Failed to claim reward');
     } finally {
+      setClaimingAchievementId(null);
       setTimeout(() => setFeedbackMessage(null), 3500);
     }
   };
@@ -483,7 +460,7 @@ export default function Achievements() {
                       borderColor: `${rarityColor}35`,
                     }}
                   >
-                    {isUnlocked ? (() => { const Icon = ACHIEVEMENT_ICONS[ach.id] ?? Award; return <Icon size={23} strokeWidth={1.8} aria-hidden="true" />; })() : <LockKeyhole size={21} strokeWidth={1.8} aria-hidden="true" />}
+                    {isUnlocked ? <AppIcon id={ach.id} glyph={ach.icon} fallback="award" size={23} /> : <LockKeyhole size={21} strokeWidth={1.8} aria-hidden="true" />}
                   </div>
 
                   <div className="achievement-title-area">
@@ -557,8 +534,9 @@ export default function Achievements() {
                       type="button"
                       className="achievement-claim-btn"
                       onClick={() => handleClaimAchievement(ach.id)}
+                      disabled={claimingAchievementId !== null}
                     >
-                      Claim Reward
+                      {claimingAchievementId === ach.id ? 'Claiming…' : 'Claim Reward'}
                     </button>
                   )}
                 </div>

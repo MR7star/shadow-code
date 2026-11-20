@@ -1,5 +1,6 @@
 import React, { useRef, useMemo, useEffect } from 'react';
 import Prism from 'prismjs';
+import { AppIcon } from '../ui/AppIcon';
 import 'prismjs/components/prism-python';
 import './CodeEditor.css';
 
@@ -132,7 +133,7 @@ export default function CodeEditor({
     <div className="code-editor-wrapper">
       <div className="code-editor-topbar">
         <div className="code-editor-lang-tag">
-          <span>🐍</span>
+          <span><AppIcon name="code" size={15} /></span>
           <span>PYTHON 3.12</span>
         </div>
         <div className="code-editor-actions-mini">
@@ -142,7 +143,7 @@ export default function CodeEditor({
             onClick={handleCopy}
             title="Copy code to clipboard"
           >
-            📋 Copy
+            <AppIcon name="copy" size={14} /> Copy
           </button>
           {onReset && (
             <button
@@ -151,7 +152,7 @@ export default function CodeEditor({
               onClick={onReset}
               title="Reset to starter template"
             >
-              ↺ Reset
+              <AppIcon name="reset" size={14} /> Reset
             </button>
           )}
         </div>

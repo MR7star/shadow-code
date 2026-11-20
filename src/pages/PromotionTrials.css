@@ -133,6 +133,11 @@
   gap: 16px;
 }
 
+.promotion-trials-request-state {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
 @media (min-width: 768px) {
   .promotion-trial-cards {
     grid-template-columns: repeat(2, 1fr);
@@ -145,7 +150,6 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   padding: 20px;
-  cursor: pointer;
   transition: all var(--transition-base);
   position: relative;
 }
@@ -155,8 +159,15 @@
   box-shadow: var(--shadow-md);
 }
 
+.promotion-trial-card-action:focus-visible,
+.promotion-trial-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--scds-focus-ring);
+}
+
 .promotion-trial-card.available {
   border-color: var(--accent-primary);
+  cursor: pointer;
 }
 
 .promotion-trial-card.locked {
@@ -256,6 +267,23 @@
   align-items: center;
 }
 
+.promotion-trial-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.promotion-trial-card-action {
+  padding: 8px 12px;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  font: 600 0.8rem var(--font-body);
+  cursor: pointer;
+}
+
 .promotion-trial-attempts {
   font-size: 0.7rem;
   color: var(--text-muted);
@@ -275,6 +303,13 @@
 .promotion-trial-btn:hover:not(:disabled) {
   background: var(--accent-primary-dim);
   box-shadow: var(--shadow-glow-md);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .promotion-trial-card,
+  .promotion-trial-btn,
+  .promotion-success-overlay,
+  .promotion-success-card { animation: none; transition: none; }
 }
 
 .promotion-trial-card.locked .promotion-trial-btn,

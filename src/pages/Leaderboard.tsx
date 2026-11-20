@@ -4,6 +4,8 @@ import { useProgression } from '../context/ProgressionContext';
 import { useAuth } from '../context/AuthContext';
 import type { LeaderboardCategory } from '../types';
 import { EmptyState, ErrorState, LoadingState } from '../components/ui';
+import { AppIcon } from '../components/ui/AppIcon';
+import { Medal, Trophy } from 'lucide-react';
 import './Leaderboard.css';
 
 function getRankColor(rank: string): string {
@@ -27,7 +29,46 @@ function getGradient(rank: number): string {
   return 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))';
 }
 
-const medals = ['🥇', '🥈', '🥉'];
+interface LeaderboardRecord {
+  rank: number;
+  playerId?: string;
+  id?: string;
+  name: string;
+  description?: string;
+  emblem?: string;
+  playerRank?: string;
+  guildRank?: string;
+  level: number;
+  xp?: number;
+  totalXp?: number;
+  weeklyXp?: number;
+  questsCompleted?: number;
+  title?: string;
+  guildName?: string | null;
+  guildEmblem?: string | null;
+  contributedXp?: number;
+  weeklyContributedXp?: number;
+  guildId?: string;
+  role?: string;
+  memberCount?: number;
+  maxMembers?: number;
+  leaderName?: string;
+  isCurrentPlayer?: boolean;
+}
+
+function isLeaderboardRecord(value: unknown): value is LeaderboardRecord {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.rank === 'number'
+    && Number.isFinite(record.rank)
+    && typeof record.name === 'string'
+    && typeof record.level === 'number'
+    && Number.isFinite(record.level);
+}
+
+function isLeaderboardRecordList(value: unknown): value is LeaderboardRecord[] {
+  return Array.isArray(value) && value.every(isLeaderboardRecord);
+}
 
 export default function Leaderboard() {
   const { player } = useProgression();
@@ -38,7 +79,7 @@ export default function Leaderboard() {
   const [rankFilter, setRankFilter] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(1);
-  const [serverData, setServerData] = useState<any[]>([]);
+  const [serverData, setServerData] = useState<LeaderboardRecord[]>([]);
   const [requestState, setRequestState] = useState<'loading' | 'success' | 'empty' | 'error'>('loading');
   const [requestError, setRequestError] = useState<string | null>(null);
   const [retryVersion, setRetryVersion] = useState(0);
@@ -59,15 +100,17 @@ export default function Leaderboard() {
         const res = await fetch(`/api/leaderboard?${params.toString()}`, { signal });
         if (!res.ok) throw new Error(`Leaderboard request failed (${res.status}).`);
 
-        const data = await res.json();
-        if (Array.isArray(data)) {
+        const data: unknown = await res.json();
+        if (signal.aborted) return;
+        if (isLeaderboardRecordList(data)) {
           setServerData(data);
           setTotalPages(1);
           setRequestState(data.length ? 'success' : 'empty');
-        } else if (data && Array.isArray(data.entries)) {
+        } else if (typeof data === 'object' && data !== null && 'entries' in data && isLeaderboardRecordList(data.entries)) {
           setServerData(data.entries);
-          setTotalPages(data.totalPages || 1);
-          setCurrentPage(data.page || 1);
+          const payload = data as { totalPages?: unknown; page?: unknown };
+          setTotalPages(typeof payload.totalPages === 'number' && payload.totalPages > 0 ? payload.totalPages : 1);
+          setCurrentPage(typeof payload.page === 'number' && payload.page > 0 ? payload.page : 1);
           setRequestState(data.entries.length ? 'success' : 'empty');
         } else {
           throw new Error('Leaderboard response was invalid.');
@@ -87,13 +130,13 @@ export default function Leaderboard() {
     return () => controller.abort();
   }, [fetchLeaderboard, activeTab, currentPage, searchQuery, rankFilter, retryVersion]);
 
-  // Fallback to mock data only for global players tab when offline
+  // Mark the authenticated hunter in the real leaderboard response.
   const entries = useMemo(() => {
     return serverData.map((entry) => {
         const isYou =
           isAuthenticated &&
           activeTab !== 'guilds' &&
-          (entry.playerId === player.id || entry.name === player.name);
+            (entry.playerId === player.id || entry.name === player.name);
         return {
           ...entry,
           isCurrentPlayer: isYou,
@@ -110,7 +153,16 @@ export default function Leaderboard() {
       });
   }, [serverData, activeTab, player, isAuthenticated]);
 
-  const top3 = entries.slice(0, 3);
+  // The API owns category ordering and assigns the authoritative rank. Sort by
+  // that rank only, preserving response order for tied ranks.
+  const rankedEntries = useMemo(
+    () => entries
+      .map((entry, index) => ({ entry, index }))
+      .sort((left, right) => left.entry.rank - right.entry.rank || left.index - right.index)
+      .map(({ entry }) => entry),
+    [entries]
+  );
+  const top3 = rankedEntries.filter((entry) => entry.rank >= 1 && entry.rank <= 3);
 
   return (
     <div className="leaderboard-page">
@@ -126,51 +178,57 @@ export default function Leaderboard() {
         <button
           className={`lb-tab-btn ${activeTab === 'players' ? 'active' : ''}`}
           onClick={() => {
+            setRequestState('loading');
             setActiveTab('players');
             setCurrentPage(1);
           }}
         >
-          ⚔️ Global Hunters
+          <><AppIcon name="swords" size={16} /> Global Hunters</>
         </button>
         <button
           className={`lb-tab-btn ${activeTab === 'weekly' ? 'active' : ''}`}
           onClick={() => {
+            setRequestState('loading');
             setActiveTab('weekly');
             setCurrentPage(1);
           }}
         >
-          🔥 Weekly Rankings
+          <><AppIcon name="flame" size={16} /> Weekly Rankings</>
         </button>
         <button
           className={`lb-tab-btn ${activeTab === 'guilds' ? 'active' : ''}`}
           onClick={() => {
+            setRequestState('loading');
             setActiveTab('guilds');
             setCurrentPage(1);
           }}
         >
-          🛡️ Guild Standings
+          <><AppIcon name="shield" size={16} /> Guild Standings</>
         </button>
         <button
           className={`lb-tab-btn ${activeTab === 'contributions' ? 'active' : ''}`}
           onClick={() => {
+            setRequestState('loading');
             setActiveTab('contributions');
             setCurrentPage(1);
           }}
         >
-          🌟 Top Contributors
+          <><AppIcon name="star" size={16} /> Top Contributors</>
         </button>
       </div>
 
       {/* Toolbar: Search & Rank Filter */}
       <div className="lb-toolbar">
         <div className="lb-search-box">
-          <span>🔍</span>
+          <span><AppIcon name="search" size={16} /></span>
           <input
             type="text"
             className="lb-search-input"
+            aria-label={activeTab === 'guilds' ? 'Search guilds' : 'Search hunters'}
             placeholder={activeTab === 'guilds' ? 'Search guilds...' : 'Search hunters...'}
             value={searchQuery}
             onChange={(e) => {
+              setRequestState('loading');
               setSearchQuery(e.target.value);
               setCurrentPage(1);
             }}
@@ -179,8 +237,10 @@ export default function Leaderboard() {
 
         <select
           className="lb-filter-select"
+          aria-label="Filter leaderboard by rank"
           value={rankFilter}
           onChange={(e) => {
+            setRequestState('loading');
             setRankFilter(e.target.value);
             setCurrentPage(1);
           }}
@@ -198,43 +258,63 @@ export default function Leaderboard() {
       </div>
 
       {/* Podium (Top 3) */}
-      {requestState === 'success' && top3.length > 0 && (
+      {requestState === 'success' && currentPage === 1 && top3.length > 0 && (
         <div className="podium stagger-children">
-          {top3.map((entry, i) => {
+          {top3.map((entry) => {
             const displayName = entry.name || entry.guildName || 'Hunter';
             const displayRank = entry.playerRank || entry.guildRank || 'E-Rank';
             const isGuild = activeTab === 'guilds';
+            const position = entry.rank;
+            const metricLabel = activeTab === 'weekly'
+              ? 'Weekly XP'
+              : activeTab === 'contributions'
+              ? 'Contribution'
+              : isGuild
+              ? 'Total XP'
+              : 'XP';
+            const metricValue = activeTab === 'weekly'
+              ? entry.weeklyXp ?? 0
+              : activeTab === 'contributions'
+              ? entry.contributedXp ?? 0
+              : isGuild
+              ? entry.totalXp ?? 0
+              : entry.totalXp ?? entry.xp ?? 0;
+            const MedalIcon = position === 1 ? Trophy : Medal;
 
             return (
               <div
-                key={entry.playerId || entry.id || `${displayName}-${i}`}
-                className={`podium-card ${i === 0 ? 'first' : i === 1 ? 'second' : 'third'}`}
+                key={entry.playerId || entry.id || `${displayName}-${position}`}
+                className={`podium-card ${position === 1 ? 'first' : position === 2 ? 'second' : 'third'} rank-${position}`}
               >
-                <div className="podium-medal">{medals[i]}</div>
+                <div className={`podium-medal podium-medal-${position}`} role="img" aria-label={`Rank ${position}`}>
+                  <MedalIcon size={20} aria-hidden="true" />
+                  <span>{position}</span>
+                </div>
                 <div
                   className="podium-avatar"
                   style={{ background: isGuild ? 'rgba(168, 85, 247, 0.2)' : getGradient(entry.rank) }}
                 >
-                  {isGuild ? entry.emblem || '🛡️' : displayName.charAt(0)}
+                  {isGuild ? <AppIcon glyph={entry.emblem} fallback="shield" size={21} /> : displayName.charAt(0)}
                 </div>
-                <div className="podium-name" title={displayName} aria-label={displayName}>{displayName}</div>
-                <span
-                  className="podium-rank-badge"
-                  style={{
-                    background: `${getRankColor(displayRank)}18`,
-                    color: getRankColor(displayRank),
-                    border: `1px solid ${getRankColor(displayRank)}40`,
-                  }}
-                >
-                  {displayRank}
-                </span>
-                <div className="podium-level">Level {entry.level}</div>
-                <div className="podium-xp">
-                  {activeTab === 'weekly'
-                    ? `+${(entry.weeklyXp || 0).toLocaleString()} XP`
-                    : activeTab === 'contributions'
-                    ? `${(entry.contributedXp || 0).toLocaleString()} XP`
-                    : `${(entry.totalXp || entry.xp || 0).toLocaleString()} XP`}
+                <div className="podium-identity">
+                  <div className="podium-name" title={displayName}>{displayName}</div>
+                  <span
+                    className="podium-rank-badge"
+                    style={{
+                      background: `${getRankColor(displayRank)}18`,
+                      color: getRankColor(displayRank),
+                      border: `1px solid ${getRankColor(displayRank)}40`,
+                    }}
+                  >
+                    {displayRank}
+                  </span>
+                </div>
+                <div className="podium-stats">
+                  <div className="podium-level">Level {entry.level}</div>
+                  <div className="podium-xp">
+                    <span className="podium-metric-label">{metricLabel}</span>
+                    {metricValue.toLocaleString()} XP
+                  </div>
                 </div>
               </div>
             );
@@ -255,7 +335,7 @@ export default function Leaderboard() {
         aria-label="Leaderboard results"
         tabIndex={0}
       >
-        <table className="leaderboard-table">
+        <table className={`leaderboard-table leaderboard-table-${activeTab}`}>
           <thead>
             {activeTab === 'guilds' ? (
               <tr>
@@ -293,7 +373,7 @@ export default function Leaderboard() {
                 <th>Hunter</th>
                 <th>Rank</th>
                 <th>Level</th>
-                <th>Total XP</th>
+                <th>XP</th>
                 <th>Quests Completed</th>
                 <th>Guild</th>
               </tr>
@@ -301,7 +381,7 @@ export default function Leaderboard() {
           </thead>
           <tbody>
             {(
-              entries.map((entry) => {
+              rankedEntries.map((entry) => {
                 const isGuild = activeTab === 'guilds';
                 const rowKey = entry.playerId || entry.id || `${entry.name}-${entry.rank}`;
 
@@ -316,7 +396,7 @@ export default function Leaderboard() {
                           style={{ textDecoration: 'none', color: 'inherit' }}
                         >
                           <div className="lb-player-avatar" style={{ background: 'rgba(168, 85, 247, 0.2)' }}>
-                            {entry.emblem || '🛡️'}
+                            <AppIcon glyph={entry.emblem} fallback="shield" size={21} />
                           </div>
                           <div>
                             <div className="lb-player-name">{entry.name}</div>
@@ -328,23 +408,23 @@ export default function Leaderboard() {
                         <span
                           className="podium-rank-badge"
                           style={{
-                            background: `${getRankColor(entry.guildRank)}18`,
-                            color: getRankColor(entry.guildRank),
-                            border: `1px solid ${getRankColor(entry.guildRank)}40`,
+                            background: `${getRankColor(entry.guildRank || 'E-Rank')}18`,
+                            color: getRankColor(entry.guildRank || 'E-Rank'),
+                            border: `1px solid ${getRankColor(entry.guildRank || 'E-Rank')}40`,
                           }}
                         >
-                          {entry.guildRank}
+                          {entry.guildRank || 'E-Rank'}
                         </span>
                       </td>
                       <td className="lb-level">Lv. {entry.level}</td>
-                      <td className="lb-xp">{entry.totalXp.toLocaleString()} XP</td>
+                      <td className="lb-xp">{(entry.totalXp ?? 0).toLocaleString()} XP</td>
                       <td style={{ color: 'var(--color-success)', fontWeight: 600 }}>
-                        +{entry.weeklyXp.toLocaleString()} XP
+                        +{(entry.weeklyXp ?? 0).toLocaleString()} XP
                       </td>
                       <td className="lb-quests">
                         {entry.memberCount}/{entry.maxMembers}
                       </td>
-                      <td style={{ color: 'var(--text-secondary)' }}>{entry.leaderName}</td>
+                      <td style={{ color: 'var(--text-secondary)' }}>{entry.leaderName || '—'}</td>
                     </tr>
                   );
                 }
@@ -373,7 +453,7 @@ export default function Leaderboard() {
                             to={`/guilds/${entry.guildId}`}
                             style={{ textDecoration: 'none', color: '#c084fc', display: 'flex', alignItems: 'center', gap: '4px' }}
                           >
-                            <span>{entry.guildEmblem || '🛡️'}</span>
+                            <span><AppIcon glyph={entry.guildEmblem} fallback="shield" size={14} /></span>
                             <span>{entry.guildName}</span>
                           </Link>
                         ) : (
@@ -383,9 +463,9 @@ export default function Leaderboard() {
                       <td>
                         <span className={`guild-role-badge ${entry.role}`}>{entry.role}</span>
                       </td>
-                      <td className="lb-xp">{entry.contributedXp.toLocaleString()} XP</td>
+                      <td className="lb-xp">{(entry.contributedXp ?? 0).toLocaleString()} XP</td>
                       <td style={{ color: 'var(--color-success)', fontWeight: 600 }}>
-                        +{entry.weeklyContributedXp.toLocaleString()} XP
+                        +{(entry.weeklyContributedXp ?? 0).toLocaleString()} XP
                       </td>
                     </tr>
                   );
@@ -412,12 +492,12 @@ export default function Leaderboard() {
                       <span
                         className="podium-rank-badge"
                         style={{
-                          background: `${getRankColor(entry.playerRank)}18`,
-                          color: getRankColor(entry.playerRank),
-                          border: `1px solid ${getRankColor(entry.playerRank)}40`,
+                          background: `${getRankColor(entry.playerRank || 'E-Rank')}18`,
+                          color: getRankColor(entry.playerRank || 'E-Rank'),
+                          border: `1px solid ${getRankColor(entry.playerRank || 'E-Rank')}40`,
                         }}
                       >
-                        {entry.playerRank}
+                        {entry.playerRank || 'E-Rank'}
                       </span>
                     </td>
                     <td className="lb-level">Lv. {entry.level}</td>
@@ -430,7 +510,7 @@ export default function Leaderboard() {
                     <td>
                       {entry.guildName ? (
                         <span style={{ color: '#c084fc', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                          <span>{entry.guildEmblem || '🛡️'}</span>
+                          <span><AppIcon glyph={entry.guildEmblem} fallback="shield" size={14} /></span>
                           <span>[{entry.guildName}]</span>
                         </span>
                       ) : (
@@ -451,7 +531,10 @@ export default function Leaderboard() {
           <button
             className="lb-page-btn"
             disabled={currentPage <= 1 || requestState === 'loading'}
-            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            onClick={() => {
+              setRequestState('loading');
+              setCurrentPage((p) => Math.max(1, p - 1));
+            }}
           >
             Previous
           </button>
@@ -461,7 +544,10 @@ export default function Leaderboard() {
           <button
             className="lb-page-btn"
             disabled={currentPage >= totalPages || requestState === 'loading'}
-            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+            onClick={() => {
+              setRequestState('loading');
+              setCurrentPage((p) => Math.min(totalPages, p + 1));
+            }}
           >
             Next
           </button>

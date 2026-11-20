@@ -22,6 +22,7 @@ import {
   transferGuildLeadership,
   updateGuildMemberRole,
 } from '../services/guildApi';
+import { AppIcon } from '../components/ui/AppIcon';
 import './Guilds.css';
 
 const EMBLEM_OPTIONS = ['🛡️', '⚔️', '🐉', '🦅', '🐺', '⚡', '🔮', '👑', '🔥', '🌑', '🩸', '❄️'];
@@ -57,6 +58,7 @@ export default function Guilds() {
 
   // Guild State
   const [userProfile, setUserProfile] = useState<UserGuildProfileResponse | null>(null);
+  const [userProfileError, setUserProfileError] = useState<string | null>(null);
   const [guildDetailsData, setGuildDetailsData] = useState<GuildDetailsResponse | null>(null);
   const [detailState, setDetailState] = useState<'idle' | 'loading' | 'loaded' | 'not-found' | 'forbidden' | 'error'>('idle');
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -126,14 +128,20 @@ export default function Guilds() {
     profileControllerRef.current?.abort();
     if (!token || !isAuthenticated) {
       setUserProfile(null);
+      setUserProfileError(null);
       return;
     }
     const controller = new AbortController();
     profileControllerRef.current = controller;
+    setUserProfileError(null);
     const result = await fetchGuildProfile(token, controller.signal);
     if (controller.signal.aborted || requestId !== profileRequestId.current) return;
-    if (result.ok && result.data) setUserProfile(result.data);
-    else console.warn('Failed to fetch user guild profile:', result.error);
+    if (result.ok && result.data) {
+      setUserProfile(result.data);
+      setUserProfileError(null);
+    } else {
+      setUserProfileError(result.error || 'Could not load your guild profile.');
+    }
   }, [token, isAuthenticated]);
 
   useEffect(() => {
@@ -141,6 +149,7 @@ export default function Guilds() {
     profileControllerRef.current?.abort();
     profileControllerRef.current = null;
     setUserProfile(null);
+    setUserProfileError(null);
     if (authLoading || !isAuthenticated || !token) return;
     void fetchUserProfile();
     return () => profileControllerRef.current?.abort();
@@ -235,10 +244,10 @@ export default function Guilds() {
 
   // If user is not in a guild and not viewing another guild, set tab to discovery
   useEffect(() => {
-    if (userProfile && !userProfile.inGuild && !routeGuildId) {
+    if (!authLoading && !routeGuildId && (!isAuthenticated || (userProfile && !userProfile.inGuild))) {
       setActiveTab('discovery');
     }
-  }, [userProfile, routeGuildId]);
+  }, [authLoading, isAuthenticated, userProfile, routeGuildId]);
 
   // Handle Create Guild
   const handleCreateGuild = async (e: React.FormEvent) => {
@@ -310,6 +319,7 @@ export default function Guilds() {
     if (!sessionProfile?.guild?.id) return;
     const soleLeader = isLeader && activeGuildDetails?.members.length === 1;
     const leaderWithRoster = isLeader && (activeGuildDetails?.members.length ?? 0) > 1;
+    if (leaderWithRoster) return;
     const description = soleLeader
       ? 'Leaving as the sole leader will disband this guild. This cannot be undone.'
       : leaderWithRoster
@@ -486,6 +496,14 @@ export default function Guilds() {
   return (
     <div className="guilds-page guild-command-center">
       {/* Toast notice */}
+      {isAuthenticated && userProfileError && (
+        <div className="guild-profile-load-error" role="alert">
+          <span>{userProfileError}</span>
+          <button type="button" className="guilds-secondary-btn" onClick={() => void fetchUserProfile()}>
+            Retry
+          </button>
+        </div>
+      )}
       {actionMessage && (
         <div className="guild-toast-slot">
           <Toast variant={actionMessage.type} title={actionMessage.type === 'error' ? 'Action failed' : 'Guild update'} message={actionMessage.text} />
@@ -505,7 +523,7 @@ export default function Guilds() {
             {sessionProfile.pendingInvites.map((inv) => (
               <div key={inv.inviteId} className="pending-invite-card">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span style={{ fontSize: '1.6rem' }}>{inv.guildEmblem}</span>
+                  <span className="pending-invite-emblem" aria-hidden="true"><AppIcon glyph={inv.guildEmblem} fallback="shield" size={24} /></span>
                   <div>
                     <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{inv.guildName}</div>
                     <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
@@ -543,7 +561,7 @@ export default function Guilds() {
           <div className="guilds-hero-content">
             <div className="guilds-hero-top">
               <div className="guilds-hero-title-wrap">
-                <div className="guilds-hero-emblem" aria-hidden="true">{displayedGuild.emblem || '🛡️'}</div>
+                <div className="guilds-hero-emblem" aria-hidden="true"><AppIcon glyph={displayedGuild.emblem} fallback="shield" size={28} /></div>
                 <div>
                   <h1 className="guilds-hero-title">
                     <span>{displayedGuild.name}</span>
@@ -571,9 +589,19 @@ export default function Guilds() {
                         Transfer Leadership
                       </button>
                     )}
-                    <button className="guilds-danger-btn" onClick={handleLeaveGuild} disabled={pendingActions.has('leave')}>
+                    <button
+                      className="guilds-danger-btn"
+                      onClick={handleLeaveGuild}
+                      disabled={pendingActions.has('leave') || (isLeader && (activeGuildDetails?.members.length ?? 0) > 1)}
+                      aria-describedby={isLeader && (activeGuildDetails?.members.length ?? 0) > 1 ? 'guild-leave-restriction' : undefined}
+                    >
                       Leave Guild
                     </button>
+                    {isLeader && (activeGuildDetails?.members.length ?? 0) > 1 && (
+                      <span id="guild-leave-restriction" className="guild-leave-restriction">
+                        Transfer leadership before leaving.
+                      </span>
+                    )}
                   </>
                 ) : (
                   <>
@@ -592,12 +620,12 @@ export default function Guilds() {
 
             {/* Guild Stats Grid */}
             <div className="guilds-hero-stats guild-command-stats">
-              <StatCard label="Guild Level" value={`Lv. ${displayedGuild.level}`} icon={<span aria-hidden="true">◆</span>} />
-              <StatCard label="Total Contribution" value={`${displayedGuild.totalXp.toLocaleString()} XP`} icon={<span aria-hidden="true">✦</span>} />
-              <StatCard label="Weekly Contribution" value={`${displayedGuild.weeklyXp.toLocaleString()} XP`} icon={<span aria-hidden="true">↗</span>} />
-              <StatCard label="Roster" value={`${displayedGuild.memberCount} / ${displayedGuild.maxMembers}`} icon={<span aria-hidden="true">♙</span>} />
+              <StatCard label="Guild Level" value={`Lv. ${displayedGuild.level}`} icon={<AppIcon name="gem" />} />
+              <StatCard label="Total Contribution" value={`${displayedGuild.totalXp.toLocaleString()} XP`} icon={<AppIcon name="sparkles" />} />
+              <StatCard label="Weekly Contribution" value={`${displayedGuild.weeklyXp.toLocaleString()} XP`} icon={<AppIcon name="trendingUp" />} />
+              <StatCard label="Roster" value={`${displayedGuild.memberCount} / ${displayedGuild.maxMembers}`} icon={<AppIcon name="users" />} />
               {isUserMember && sessionProfile?.membership && (
-                <StatCard label="Your Contribution" value={`${sessionProfile.membership.contributedXp.toLocaleString()} XP`} icon={<span aria-hidden="true">✧</span>} />
+                <StatCard label="Your Contribution" value={`${sessionProfile.membership.contributedXp.toLocaleString()} XP`} icon={<AppIcon name="zap" />} />
               )}
             </div>
           </div>
@@ -616,7 +644,7 @@ export default function Guilds() {
               </div>
               {isAuthenticated && (
                 <button className="guilds-action-btn" onClick={() => setShowCreateModal(true)}>
-                  <span>🛡️</span> Create Guild
+                  <AppIcon name="shield" size={16} /> Create Guild
                 </button>
               )}
             </div>
@@ -633,21 +661,21 @@ export default function Guilds() {
               aria-pressed={activeTab === 'members'}
               onClick={() => setActiveTab('members')}
             >
-              👥 Member Roster ({activeGuildDetails?.members?.length || displayedGuild.memberCount})
+              <><AppIcon name="users" size={15} /> Member Roster ({activeGuildDetails?.members?.length || displayedGuild.memberCount})</>
             </button>
             <button
               className={`guild-tab-btn ${activeTab === 'quests' ? 'active' : ''}`}
               aria-pressed={activeTab === 'quests'}
               onClick={() => setActiveTab('quests')}
             >
-              ⚔️ Cooperative Quests ({activeGuildDetails?.quests?.length || 0})
+              <><AppIcon name="swords" size={15} /> Cooperative Quests ({activeGuildDetails?.quests?.length || 0})</>
             </button>
             <button
               className={`guild-tab-btn ${activeTab === 'milestones' ? 'active' : ''}`}
               aria-pressed={activeTab === 'milestones'}
               onClick={() => setActiveTab('milestones')}
             >
-              🏆 Milestones ({activeGuildDetails?.achievements?.length || 0})
+              <><AppIcon name="trophy" size={15} /> Milestones ({activeGuildDetails?.achievements?.length || 0})</>
             </button>
           </>
         )}
@@ -656,7 +684,7 @@ export default function Guilds() {
           aria-pressed={activeTab === 'discovery'}
           onClick={() => setActiveTab('discovery')}
         >
-          🔍 Discover Guilds
+          <><AppIcon name="search" size={15} /> Discover Guilds</>
         </button>
       </div>
 
@@ -748,7 +776,7 @@ export default function Guilds() {
                               disabled={pendingActions.has(`role:${m.userId}`)}
                               onClick={() => handleRoleChange(m.userId, 'officer', m.name)}
                             >
-                              ⬆ Officer
+                              <><AppIcon name="arrowUp" size={14} /> Officer</>
                             </button>
                           )}
                           {canManageMember && m.role === 'officer' && (
@@ -758,7 +786,7 @@ export default function Guilds() {
                               disabled={pendingActions.has(`role:${m.userId}`)}
                               onClick={() => handleRoleChange(m.userId, 'member', m.name)}
                             >
-                              ⬇ Member
+                              <><AppIcon name="arrowDown" size={14} /> Member</>
                             </button>
                           )}
                           {canKickMember && (
@@ -768,7 +796,7 @@ export default function Guilds() {
                               disabled={pendingActions.has(`kick:${m.userId}`)}
                               onClick={() => handleKickMember(m.userId, m.name)}
                             >
-                              ✕ Kick
+                              <AppIcon name="x" size={14} /> Kick
                             </button>
                           )}
                         </div>
@@ -844,7 +872,7 @@ export default function Guilds() {
                   )}
                   {isClaimed && (
                     <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                      ✓ Claimed{q.claimedAt ? ` ${new Date(q.claimedAt).toLocaleDateString()}` : ''}
+                      <AppIcon name="checkCircle" size={14} /> Claimed{q.claimedAt ? ` ${new Date(q.claimedAt).toLocaleDateString()}` : ''}
                     </span>
                   )}
                 </div>
@@ -867,7 +895,7 @@ export default function Guilds() {
           {activeGuildDetails.achievements.map((a) => (
             <Panel as="article" key={a.id} className="guild-quest-card completed guild-achievement-card">
               <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                <span style={{ fontSize: '2rem' }}>{a.icon}</span>
+                <span><AppIcon glyph={a.icon} fallback="award" size={24} /></span>
                 <div className="guild-achievement-copy">
                   <div className="guild-quest-title">{a.name}</div>
                   <div className="guild-quest-desc">{a.description}</div>
@@ -880,7 +908,7 @@ export default function Guilds() {
           ))}
           {activeGuildDetails.achievements.length === 0 && (
             <div className="guild-empty-state" style={{ gridColumn: '1 / -1' }}>
-              <div className="guild-empty-icon">🏆</div>
+              <div className="guild-empty-icon"><AppIcon name="trophy" size={24} /></div>
               <div className="guild-empty-title">No Achievements Unlocked Yet</div>
               <div className="guild-empty-desc">
                 Unlocked guild achievements will appear here.
@@ -897,10 +925,11 @@ export default function Guilds() {
           {/* Toolbar */}
           <div className="guilds-toolbar guild-discovery-toolbar">
             <div className="guilds-search-box">
-              <span>🔍</span>
+              <span><AppIcon name="search" size={16} /></span>
               <input
                 type="text"
                 className="guilds-search-input"
+                aria-label="Search guilds by name"
                 placeholder="Search guilds by name..."
                 value={searchQuery}
                 onChange={(e) => {
@@ -913,6 +942,7 @@ export default function Guilds() {
             <div className="guild-filter-actions">
               <select
                 className="guilds-filter-select"
+                aria-label="Filter guilds by rank"
                 value={rankFilter}
                 onChange={(e) => {
                   setRankFilter(e.target.value);
@@ -962,7 +992,7 @@ export default function Guilds() {
             {discoveryList.map((g) => (
               <Panel as="article" key={g.id} className="guild-card guild-command-card">
                 <div className="guild-card-top">
-                  <div className="guild-card-emblem" aria-hidden="true">{g.emblem || '🛡️'}</div>
+                  <div className="guild-card-emblem" aria-hidden="true"><AppIcon glyph={g.emblem} fallback="shield" size={24} /></div>
                   <div className="guild-card-info">
                     <h2 className="guild-card-name">{g.name}</h2>
                     <div className="guild-card-meta">
@@ -976,8 +1006,8 @@ export default function Guilds() {
                 {g.leaderName && <div className="guild-card-leader">Leader <strong>{g.leaderName}</strong>{g.leaderRank && <span>{g.leaderRank}</span>}</div>}
 
                 <div className="guild-card-stats">
-                  <span>♙ {g.memberCount}/{g.maxMembers} Members</span>
-                  <span>✦ {g.totalXp.toLocaleString()} Total XP</span>
+                  <span><AppIcon name="users" size={14} /> {g.memberCount}/{g.maxMembers} Members</span>
+                  <span><AppIcon name="sparkles" size={14} /> {g.totalXp.toLocaleString()} Total XP</span>
                 </div>
                 <div className="guild-card-weekly">Weekly contribution <strong>{g.weeklyXp.toLocaleString()} XP</strong></div>
 
@@ -1009,7 +1039,7 @@ export default function Guilds() {
           {/* Empty state */}
           {discoveryHasLoaded && !discoveryError && discoveryList.length === 0 && (
             <EmptyState
-              icon={<span aria-hidden="true">🛡️</span>}
+              icon={<AppIcon name="shield" />}
               title={normalizedSearchQuery || rankFilter !== 'all' ? 'No Matching Guilds' : 'No Guilds Available'}
               description={normalizedSearchQuery || rankFilter !== 'all' ? 'Try changing the search or rank filter.' : 'There are no guild records to display right now.'}
               action={isAuthenticated && !sessionProfile?.inGuild ? <Button onClick={() => setShowCreateModal(true)}>Create a Guild Now</Button> : undefined}
@@ -1058,11 +1088,11 @@ export default function Guilds() {
                       key={emb}
                       type="button"
                       className={`emblem-option ${newGuildEmblem === emb ? 'selected' : ''}`}
-                      aria-label={`Select ${emb} emblem`}
+                      aria-label={`Select ${emb} guild emblem`}
                       aria-pressed={newGuildEmblem === emb}
                       onClick={() => setNewGuildEmblem(emb)}
                     >
-                      {emb}
+                      <AppIcon glyph={emb} fallback="shield" size={18} />
                     </button>
                   ))}
                 </div>

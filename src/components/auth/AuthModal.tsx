@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { AppIcon } from '../ui/AppIcon';
 import './AuthModal.css';
 
 export default function AuthModal() {
   const { authModalOpen, closeAuthModal, login, register, loginDemo } = useAuth();
+  const modalRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<'login' | 'register'>('login');
 
   // Form states
@@ -15,13 +17,43 @@ export default function AuthModal() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    if (!authModalOpen) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const dialog = modalRef.current;
+    const getFocusable = () => dialog?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+    );
+    dialog?.querySelector<HTMLElement>('input:not([disabled]), button:not([disabled])')?.focus();
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && authModalOpen) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
         closeAuthModal();
+        return;
+      }
+      if (e.key === 'Tab') {
+        const focusable = getFocusable();
+        if (!focusable?.length) {
+          e.preventDefault();
+          dialog?.focus();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && (document.activeElement === first || document.activeElement === dialog)) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && (document.activeElement === last || document.activeElement === dialog)) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      if (previous?.isConnected) previous.focus();
+    };
   }, [authModalOpen, closeAuthModal]);
 
   if (!authModalOpen) return null;
@@ -68,7 +100,7 @@ export default function AuthModal() {
         if (e.target === e.currentTarget) closeAuthModal();
       }}
     >
-      <div className="auth-modal-container" role="dialog" aria-modal="true">
+      <div ref={modalRef} className="auth-modal-container" role="dialog" aria-modal="true" aria-label={tab === 'login' ? 'Sign in to Shadow Code' : 'Create a Shadow Code account'} tabIndex={-1}>
         <div className="auth-modal-header">
           <button
             type="button"
@@ -76,10 +108,10 @@ export default function AuthModal() {
             onClick={closeAuthModal}
             aria-label="Close"
           >
-            ✕
+            <AppIcon name="x" size={18} />
           </button>
           <div className="auth-modal-brand">
-            <span>⚡</span>
+            <span><AppIcon name="zap" size={18} /></span>
             <span>SHADOW CODE</span>
           </div>
           <div className="auth-modal-subtitle">
@@ -117,30 +149,31 @@ export default function AuthModal() {
         <form className="auth-form" onSubmit={handleSubmit}>
           {error && (
             <div className="auth-error-banner" role="alert">
-              <span>⚠️</span>
+              <span><AppIcon name="alertTriangle" size={16} /></span>
               <span>{error}</span>
             </div>
           )}
 
           <div className="auth-field">
-            <label className="auth-label">
+            <label className="auth-label" htmlFor="auth-username">
               {tab === 'login' ? 'Username or Email' : 'Hunter Username'}
             </label>
             <input
+              id="auth-username"
               type="text"
               className="auth-input"
               required
               placeholder={tab === 'login' ? 'ShadowMonarch or email' : 'e.g. JinWoo'}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              autoFocus
             />
           </div>
 
           {tab === 'register' && (
             <div className="auth-field">
-              <label className="auth-label">Email Address</label>
+              <label className="auth-label" htmlFor="auth-email">Email Address</label>
               <input
+                id="auth-email"
                 type="email"
                 className="auth-input"
                 required
@@ -152,8 +185,9 @@ export default function AuthModal() {
           )}
 
           <div className="auth-field">
-            <label className="auth-label">Password</label>
+            <label className="auth-label" htmlFor="auth-password">Password</label>
             <input
+              id="auth-password"
               type="password"
               className="auth-input"
               required
@@ -165,8 +199,9 @@ export default function AuthModal() {
 
           {tab === 'register' && (
             <div className="auth-field">
-              <label className="auth-label">Confirm Password</label>
+              <label className="auth-label" htmlFor="auth-confirm-password">Confirm Password</label>
               <input
+                id="auth-confirm-password"
                 type="password"
                 className="auth-input"
                 required
@@ -189,7 +224,7 @@ export default function AuthModal() {
             onClick={handleDemoLogin}
             disabled={loading}
           >
-            <span>⚔️</span>
+            <span><AppIcon name="swords" size={18} /></span>
             <span>Play as Demo Hunter (ShadowMonarch)</span>
           </button>
         </form>

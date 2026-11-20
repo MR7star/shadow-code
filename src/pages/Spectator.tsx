@@ -17,24 +17,37 @@ export default function Spectator() {
 
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tickTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const requestVersionRef = useRef(0);
+  const requestInFlightRef = useRef(false);
 
   // ─── Fetch Sanitized Spectator Data ──────────────────────────────
   const loadSpectatorData = useCallback(async (isInitial = false) => {
     if (!matchId) return;
+    if (requestInFlightRef.current) return;
+    requestInFlightRef.current = true;
+    const requestVersion = ++requestVersionRef.current;
     if (isInitial) setLoading(true);
 
-    const res = await fetchSpectatorMatch(token, matchId);
-    if (res.ok && res.data?.match) {
-      setMatch(res.data.match);
-      setRemainingSec(res.data.match.remainingSeconds || 0);
-      setError(null);
-    } else {
-      if (isInitial) {
+    try {
+      const res = await fetchSpectatorMatch(token, matchId);
+      if (requestVersion !== requestVersionRef.current) return;
+      if (res.ok && res.data?.match) {
+        setMatch(res.data.match);
+        setRemainingSec(res.data.match.remainingSeconds || 0);
+        setError(null);
+      } else if (isInitial) {
         setError(res.error || 'Unable to connect to live match broadcast.');
       }
+    } catch (requestError) {
+      if (requestVersion === requestVersionRef.current && isInitial) {
+        setError(requestError instanceof Error ? requestError.message : 'Unable to connect to live match broadcast.');
+      }
+    } finally {
+      if (requestVersion === requestVersionRef.current) {
+        requestInFlightRef.current = false;
+        if (isInitial) setLoading(false);
+      }
     }
-
-    if (isInitial) setLoading(false);
   }, [matchId, token]);
 
   // ─── Initial Load & Polling Lifecycle ────────────────────────────
@@ -52,6 +65,8 @@ export default function Spectator() {
     }, 1000);
 
     return () => {
+      requestVersionRef.current += 1;
+      requestInFlightRef.current = false;
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
       if (tickTimerRef.current) clearInterval(tickTimerRef.current);
     };

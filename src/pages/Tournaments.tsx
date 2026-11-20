@@ -142,6 +142,7 @@ export default function Tournaments() {
   const [pendingActions, setPendingActions] = useState<Set<string>>(() => new Set());
   const pendingActionsRef = useRef<Set<string>>(new Set());
   const pollControllerRef = useRef<AbortController | null>(null);
+  const noticeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activeFilter, setActiveFilter] = useState<'all' | TournamentStatus>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [notice, setNotice] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -167,8 +168,15 @@ export default function Tournaments() {
   // Notice helper
   const showNotice = useCallback((text: string, type: 'success' | 'error' = 'success') => {
     setNotice({ text, type });
-    const timer = setTimeout(() => setNotice(null), 5000);
-    return () => clearTimeout(timer);
+    if (noticeTimeoutRef.current) clearTimeout(noticeTimeoutRef.current);
+    noticeTimeoutRef.current = setTimeout(() => {
+      noticeTimeoutRef.current = null;
+      setNotice(null);
+    }, 5000);
+  }, []);
+
+  useEffect(() => () => {
+    if (noticeTimeoutRef.current) clearTimeout(noticeTimeoutRef.current);
   }, []);
 
   const showTournamentNotice = (id: string, text: string, type: 'success' | 'error' = 'success') => {
@@ -765,26 +773,34 @@ export default function Tournaments() {
         {/* Details Tab Navigation */}
         <div className="details-tab-nav">
           <button
+            type="button"
             className={`details-tab-btn ${detailTab === 'bracket' ? 'active' : ''}`}
             onClick={() => setDetailTab('bracket')}
+            aria-pressed={detailTab === 'bracket'}
           >
             <Trophy size={16} aria-hidden="true" /> Bracket Tree ({bracketRounds.length} Rounds)
           </button>
           <button
+            type="button"
             className={`details-tab-btn ${detailTab === 'live' ? 'active' : ''}`}
             onClick={() => setDetailTab('live')}
+            aria-pressed={detailTab === 'live'}
           >
             <Radio size={16} aria-hidden="true" /> Live Matches {liveMatches.length > 0 && `(${liveMatches.length})`}
           </button>
           <button
+            type="button"
             className={`details-tab-btn ${detailTab === 'roster' ? 'active' : ''}`}
             onClick={() => setDetailTab('roster')}
+            aria-pressed={detailTab === 'roster'}
           >
             <Users size={16} aria-hidden="true" /> Hunters ({selectedTournament.participants.length})
           </button>
           <button
+            type="button"
             className={`details-tab-btn ${detailTab === 'rewards' ? 'active' : ''}`}
             onClick={() => setDetailTab('rewards')}
+            aria-pressed={detailTab === 'rewards'}
           >
             <Gift size={16} aria-hidden="true" /> Prize Pool & Rules
           </button>
@@ -1341,7 +1357,7 @@ export default function Tournaments() {
 
                   {t.isRegistered ? (
                     <span className="badge-registered">
-                      ✓ Registered
+                      <CheckCircle2 size={14} aria-hidden="true" /> Registered
                     </span>
                   ) : t.status === 'registration' && !isFull ? (
                     <button

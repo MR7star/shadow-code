@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { useProgression } from '../context/ProgressionContext';
 import { useAuth } from '../context/AuthContext';
+import { AppIcon } from '../components/ui/AppIcon';
 import { pythonChallenges, getChallengeById } from '../data/challenges';
 import CodeEditor from '../components/editor/CodeEditor';
 import type { QuestDifficulty } from '../types';
@@ -141,26 +142,30 @@ export default function QuestSolver() {
     }
     return challenge.starterCode;
   });
+  const [loadedDraftChallengeId, setLoadedDraftChallengeId] = useState(challenge.id);
 
   useEffect(() => {
+    if (loadedDraftChallengeId !== challenge.id) return;
     try {
       localStorage.setItem(storageKey, code);
     } catch (e) {
       console.warn('Could not save draft to localStorage', e);
     }
-  }, [code, storageKey]);
+  }, [code, storageKey, loadedDraftChallengeId, challenge.id]);
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem(`shadow_code_draft_${challenge.id}`);
       if (saved !== null) {
         setCode(saved);
+        setLoadedDraftChallengeId(challenge.id);
         return;
       }
     } catch (e) {
       console.warn(e);
     }
     setCode(challenge.starterCode);
+    setLoadedDraftChallengeId(challenge.id);
   }, [challenge]);
 
   const [runnerStatus, setRunnerStatus] = useState<'checking' | 'online' | 'offline'>('checking');
@@ -174,18 +179,19 @@ export default function QuestSolver() {
   const [lessonSection, setLessonSection] = useState<'concept' | 'example' | 'worked' | 'mistakes' | 'hints'>('concept');
   const [showPracticeChallenge, setShowPracticeChallenge] = useState(false);
 
-  const checkRunnerHealth = useCallback(async () => {
+  const checkRunnerHealth = useCallback(async (): Promise<boolean> => {
     setRunnerStatus('checking');
     try {
       const res = await fetch('/api/health', { method: 'GET' });
       if (res.ok) {
         setRunnerStatus('online');
-        return;
+        return true;
       }
     } catch {
       // Runner is unreachable
     }
     setRunnerStatus('offline');
+    return false;
   }, []);
 
   useEffect(() => {
@@ -220,7 +226,11 @@ export default function QuestSolver() {
   const handleReset = () => {
     if (window.confirm('Reset code to the original starter template? Your current draft will be overwritten.')) {
       setCode(challenge.starterCode);
-      localStorage.removeItem(storageKey);
+      try {
+        localStorage.removeItem(storageKey);
+      } catch (e) {
+        console.warn('Could not remove saved draft from localStorage', e);
+      }
       setEvalResult(null);
     }
   };
@@ -233,8 +243,7 @@ export default function QuestSolver() {
 
   const handleRunCode = async () => {
     if (runnerStatus === 'offline') {
-      await checkRunnerHealth();
-      if (runnerStatus === 'offline') return;
+      if (!(await checkRunnerHealth())) return;
     }
 
     setIsRunning(true);
@@ -286,8 +295,7 @@ export default function QuestSolver() {
     }
 
     if (runnerStatus === 'offline') {
-      await checkRunnerHealth();
-      if (runnerStatus === 'offline') return;
+      if (!(await checkRunnerHealth())) return;
     }
 
     setIsRunning(true);
@@ -394,11 +402,11 @@ export default function QuestSolver() {
 
   const getErrorIcon = (type?: string | null) => {
     switch (type) {
-      case 'syntax': return '📝';
-      case 'runtime': return '⚡';
-      case 'timeout': return '⏱️';
-      case 'incorrect_output': return '🎯';
-      default: return '⚔️';
+      case 'syntax': return <AppIcon name="file" size={16} />;
+      case 'runtime': return <AppIcon name="zap" size={16} />;
+      case 'timeout': return <AppIcon name="timer" size={16} />;
+      case 'incorrect_output': return <AppIcon name="target" size={16} />;
+      default: return <AppIcon name="swords" size={16} />;
     }
   };
 
@@ -416,7 +424,7 @@ export default function QuestSolver() {
     return (
       <main className="quest-solver-page">
         <div className="solver-top-bar">
-          <Link to="/quests" className="solver-nav-back">← Back to Quests</Link>
+          <Link to="/quests" className="solver-nav-back"><AppIcon name="arrowLeft" size={14} /> Back to Quests</Link>
         </div>
         <section className="solver-desc-pane" role="alert">
           <h1 className="solver-title">Mission unavailable</h1>
@@ -431,7 +439,7 @@ export default function QuestSolver() {
       {/* Top Bar Navigation & Metadata */}
       <div className="solver-top-bar">
         <Link to="/quests" className="solver-nav-back">
-          ← Back to Quests
+          <AppIcon name="arrowLeft" size={14} /> Back to Quests
         </Link>
 
         <div className="solver-quest-meta-chips">
@@ -469,7 +477,7 @@ export default function QuestSolver() {
               : 'Execution Runner is offline'
           }
         >
-          <span>{runnerStatus === 'online' ? '🟢' : runnerStatus === 'offline' ? '🔴' : '🟡'}</span>
+          <span><AppIcon name={runnerStatus === 'online' ? 'checkCircle' : runnerStatus === 'offline' ? 'circleX' : 'circleHelp'} size={15} /></span>
           <span>
             {runnerStatus === 'online'
               ? 'Runner Ready'
@@ -500,7 +508,7 @@ export default function QuestSolver() {
                 color: 'var(--color-warning)',
               }}
             >
-              🔒 <strong>Prerequisites Required:</strong> Complete{" "}
+              <AppIcon name="lock" size={14} /> <strong>Prerequisites Required:</strong> Complete{" "}
               {unmetPrereqs.map((p) => `"${p.title}"`).join(', ')} before attempting this challenge.
             </div>
           )}
@@ -519,8 +527,8 @@ export default function QuestSolver() {
                 onClick={() => setLearningMode(!learningMode)}
                 style={{ width: '100%' }}
               >
-                <span>{learningMode ? '📖 Hide Lesson' : '📖 Show Lesson'}</span>
-                <span>{learningMode ? '▲' : '▼'}</span>
+                <span><AppIcon name="book" size={15} /> {learningMode ? 'Hide Lesson' : 'Show Lesson'}</span>
+                <span><AppIcon name={learningMode ? 'arrowUp' : 'arrowDown'} size={13} /></span>
               </button>
             </div>
           )}
@@ -534,35 +542,35 @@ export default function QuestSolver() {
                   className={`solver-lesson-tab ${lessonSection === 'concept' ? 'active' : ''}`}
                   onClick={() => setLessonSection('concept')}
                 >
-                  🧠 Concept
+                  <AppIcon name="brain" size={15} /> Concept
                 </button>
                 <button
                   type="button"
                   className={`solver-lesson-tab ${lessonSection === 'example' ? 'active' : ''}`}
                   onClick={() => setLessonSection('example')}
                 >
-                  💻 Example
+                  <AppIcon name="laptop" size={15} /> Example
                 </button>
                 <button
                   type="button"
                   className={`solver-lesson-tab ${lessonSection === 'worked' ? 'active' : ''}`}
                   onClick={() => setLessonSection('worked')}
                 >
-                  📝 Worked Example
+                  <AppIcon name="file" size={15} /> Worked Example
                 </button>
                 <button
                   type="button"
                   className={`solver-lesson-tab ${lessonSection === 'mistakes' ? 'active' : ''}`}
                   onClick={() => setLessonSection('mistakes')}
                 >
-                  ⚠️ Common Mistakes
+                  <AppIcon name="alertTriangle" size={15} /> Common Mistakes
                 </button>
                 <button
                   type="button"
                   className={`solver-lesson-tab ${lessonSection === 'hints' ? 'active' : ''}`}
                   onClick={() => setLessonSection('hints')}
                 >
-                  🗝️ Progressive Hints
+                  <AppIcon name="key" size={15} /> Progressive Hints
                 </button>
               </div>
 
@@ -612,7 +620,7 @@ export default function QuestSolver() {
                     <ul className="solver-mistakes-list">
                       {challenge.lesson.commonMistakes.map((mistake, i) => (
                         <li key={i}>
-                          <span className="solver-mistake-icon">⚠️</span>
+                          <span className="solver-mistake-icon"><AppIcon name="alertTriangle" size={15} /></span>
                           <span>{mistake}</span>
                         </li>
                       ))}
@@ -635,7 +643,7 @@ export default function QuestSolver() {
                             onClick={() => toggleProgressiveHint(i)}
                           >
                             <span>Hint {i + 1}</span>
-                            <span>{revealedProgressiveHints.includes(i) ? '▲ Hide' : '▼ Show'}</span>
+                            <span><AppIcon name={revealedProgressiveHints.includes(i) ? 'arrowUp' : 'arrowDown'} size={12} /> {revealedProgressiveHints.includes(i) ? 'Hide' : 'Show'}</span>
                           </button>
                           {revealedProgressiveHints.includes(i) && (
                             <div className="solver-hint-content-revealed">{hint}</div>
@@ -651,17 +659,17 @@ export default function QuestSolver() {
 
           {/* Problem description */}
           <div>
-            <div className="solver-section-heading">📜 Problem Statement</div>
+            <div className="solver-section-heading"><AppIcon name="scroll" size={16} /> Problem Statement</div>
             <div className="solver-body-text">{challenge.description}</div>
           </div>
 
           {/* Learning Objectives */}
           <div>
-            <div className="solver-section-heading">🎯 Learning Objectives</div>
+            <div className="solver-section-heading"><AppIcon name="target" size={16} /> Learning Objectives</div>
             <div className="solver-objectives-list">
               {challenge.learningObjectives.map((obj, i) => (
                 <div key={i} className="solver-objective-item">
-                  <span style={{ color: 'var(--accent-cyan)' }}>✓</span>
+                  <span style={{ color: 'var(--accent-cyan)' }}><AppIcon name="check" size={14} /></span>
                   <span>{obj}</span>
                 </div>
               ))}
@@ -670,7 +678,7 @@ export default function QuestSolver() {
 
           {/* Examples */}
           <div>
-            <div className="solver-section-heading">💡 Examples</div>
+            <div className="solver-section-heading"><AppIcon name="lightbulb" size={16} /> Examples</div>
             <div className="solver-examples-list">
               {challenge.sampleTests.map((test, i) => (
                 <div key={i} className="solver-example-card">
@@ -693,7 +701,7 @@ export default function QuestSolver() {
 
           {/* Constraints */}
           <div>
-            <div className="solver-section-heading">⚙️ Constraints</div>
+            <div className="solver-section-heading"><AppIcon name="settings" size={16} /> Constraints</div>
             <div className="solver-constraints-list">
               {challenge.constraints.map((c, i) => (
                 <div key={i}>• {c}</div>
@@ -704,7 +712,7 @@ export default function QuestSolver() {
           {/* Quick Hints — only show when lesson panel is closed and challenge has hints not in lesson */}
           {challenge.hints && challenge.hints.length > 0 && !learningMode && (
             <div>
-              <div className="solver-section-heading">🗝️ Quick Hints</div>
+              <div className="solver-section-heading"><AppIcon name="key" size={16} /> Quick Hints</div>
               <div className="solver-hints-block">
                 {challenge.hints.map((hint, i) => (
                   <div key={i}>
@@ -714,7 +722,7 @@ export default function QuestSolver() {
                       onClick={() => toggleQuickHint(i)}
                     >
                       <span>Hint {i + 1}</span>
-                      <span>{revealedQuickHints.includes(i) ? '▲ Hide' : '▼ Show'}</span>
+                      <span><AppIcon name={revealedQuickHints.includes(i) ? 'arrowUp' : 'arrowDown'} size={12} /> {revealedQuickHints.includes(i) ? 'Hide' : 'Show'}</span>
                     </button>
                     {revealedQuickHints.includes(i) && (
                       <div className="solver-hint-content">{hint}</div>
@@ -723,7 +731,7 @@ export default function QuestSolver() {
                 ))}
               </div>
               <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                📖 Open the Lesson panel above for step-by-step explanation and progressive hints.
+                <AppIcon name="book" size={14} /> Open the Lesson panel above for step-by-step explanation and progressive hints.
               </p>
             </div>
           )}
@@ -732,7 +740,7 @@ export default function QuestSolver() {
           {challenge.conceptId && conceptMasteryLevel > 0 && (
             <div className="solver-mastery-progress">
               <div className="solver-mastery-header">
-                <span>📊 Concept Mastery: {challenge.conceptId}</span>
+                <span><AppIcon name="barChart" size={14} /> Concept Mastery: {challenge.conceptId}</span>
                 <span>Level {conceptMasteryLevel} / 5</span>
               </div>
               <div className="solver-mastery-bar">
@@ -755,7 +763,7 @@ export default function QuestSolver() {
           {runnerStatus === 'offline' && (
             <div className="solver-runner-banner">
               <div style={{ display: 'flex', alignItems: 'center' }}>
-                <span className="solver-runner-banner-icon">⚠️</span>
+                <span className="solver-runner-banner-icon"><AppIcon name="alertTriangle" size={17} /></span>
                 <div>
                   <strong>Isolated Execution Runner Offline</strong>
                   <div>
@@ -778,7 +786,7 @@ export default function QuestSolver() {
           {showPracticeChallenge && challenge.practiceChallengeId && (
             <div className="solver-practice-banner">
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span style={{ fontSize: '1.5rem' }}>🎯</span>
+                <span><AppIcon name="target" size={22} /></span>
                 <div style={{ flex: 1 }}>
                   <strong>Challenge Conquered!</strong>
                   <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
@@ -790,7 +798,7 @@ export default function QuestSolver() {
                   className="solver-practice-btn"
                   onClick={handlePracticeChallenge}
                 >
-                  🎯 Practice Challenge
+                  <AppIcon name="target" size={15} /> Practice Challenge
                 </button>
               </div>
             </div>
@@ -799,7 +807,7 @@ export default function QuestSolver() {
           {/* Mastery Message from Practice Completion */}
           {evalResult?.masteryMessage && (
             <div className="solver-mastery-message">
-              <span>✨</span>
+              <span><AppIcon name="sparkles" size={16} /></span>
               <span>{evalResult.masteryMessage}</span>
             </div>
           )}
@@ -840,7 +848,7 @@ export default function QuestSolver() {
                 disabled={isRunning || runnerStatus === 'offline'}
                 title="Run against sample test cases (does not award XP)"
               >
-                {isRunning ? '⏳ Running...' : '▶ Run Code'}
+                {isRunning ? <><AppIcon name="hourglass" size={15} /> Running...</> : <><AppIcon name="play" size={15} /> Run Code</>}
               </button>
 
               <button
@@ -850,7 +858,7 @@ export default function QuestSolver() {
                 disabled={isRunning || runnerStatus === 'offline' || unmetPrereqs.length > 0}
                 title={unmetPrereqs.length > 0 ? 'Complete prerequisites first' : 'Run against sample + server-side hidden test cases to earn XP'}
               >
-                {isRunning ? '⏳ Evaluating...' : '⚔️ Submit Solution'}
+                {isRunning ? <><AppIcon name="hourglass" size={15} /> Evaluating...</> : <><AppIcon name="swords" size={15} /> Submit Solution</>}
               </button>
             </div>
           </div>
@@ -906,7 +914,7 @@ export default function QuestSolver() {
                     <span className="solver-error-desc">{evalResult.error}</span>
                     {evalResult.errorType === 'incorrect_output' && firstFailedTest && !firstFailedTest.isHidden && (
                       <div className="solver-error-hint">
-                        💡 First failed: <code style={{ fontSize: '0.78rem' }}>{firstFailedTest.description}</code>
+                        <AppIcon name="lightbulb" size={14} /> First failed: <code style={{ fontSize: '0.78rem' }}>{firstFailedTest.description}</code>
                         {' — '}your function returned <code style={{ color: 'var(--color-danger)', fontSize: '0.78rem' }}>{JSON.stringify(firstFailedTest.actual)}</code>,
                         {' '}but the expected value is{' '}
                         <code style={{ color: 'var(--color-success)', fontSize: '0.78rem' }}>{JSON.stringify(firstFailedTest.expected)}</code>.
@@ -915,22 +923,22 @@ export default function QuestSolver() {
                     )}
                     {evalResult.errorType === 'incorrect_output' && (!firstFailedTest || firstFailedTest.isHidden) && (
                       <div className="solver-error-hint">
-                        💡 Your logic is close — a hidden test case failed. Review edge cases like empty inputs, boundaries, and type handling.
+                        <AppIcon name="lightbulb" size={14} /> Your logic is close — a hidden test case failed. Review edge cases like empty inputs, boundaries, and type handling.
                       </div>
                     )}
                     {evalResult.errorType === 'timeout' && (
                       <div className="solver-error-hint">
-                        💡 Your code exceeded the {3}s time limit. Check for infinite loops or replace naive recursion with an iterative approach.
+                        <AppIcon name="lightbulb" size={14} /> Your code exceeded the {3}s time limit. Check for infinite loops or replace naive recursion with an iterative approach.
                       </div>
                     )}
                     {evalResult.errorType === 'syntax' && (
                       <div className="solver-error-hint">
-                        💡 Python syntax error — check for missing colons after <code>if</code>/<code>for</code>/<code>def</code>, incorrect indentation (use 4 spaces), or unclosed parentheses.
+                        <AppIcon name="lightbulb" size={14} /> Python syntax error — check for missing colons after <code>if</code>/<code>for</code>/<code>def</code>, incorrect indentation (use 4 spaces), or unclosed parentheses.
                       </div>
                     )}
                     {evalResult.errorType === 'runtime' && !evalResult.error?.includes('Authentication') && !evalResult.error?.includes('Prerequisites') && (
                       <div className="solver-error-hint">
-                        💡 A runtime exception was raised during execution. Check that you handle all edge cases (e.g., empty lists, None values, division by zero).
+                        <AppIcon name="lightbulb" size={14} /> A runtime exception was raised during execution. Check that you handle all edge cases (e.g., empty lists, None values, division by zero).
                       </div>
                     )}
                   </div>
@@ -941,7 +949,7 @@ export default function QuestSolver() {
               {evalResult && evalResult.isSubmission && evalResult.allPassed && (
                 <div className={`solver-feedback-banner success ${evalResult.leveledUp ? 'level-up' : ''}`}>
                   <div className="solver-feedback-icon">
-                    {evalResult.leveledUp ? '⚡' : '🎉'}
+                    <AppIcon name={evalResult.leveledUp ? 'zap' : 'sparkles'} size={20} />
                   </div>
                   <div className="solver-feedback-text">
                     <span className="solver-feedback-title">
@@ -970,7 +978,7 @@ export default function QuestSolver() {
                   }`}
                 >
                   <div className="solver-feedback-icon">
-                    {evalResult.allPassed ? '✓' : '⚠️'}
+                    <AppIcon name={evalResult.allPassed ? 'checkCircle' : 'alertTriangle'} size={20} />
                   </div>
                   <div className="solver-feedback-text">
                     <span className="solver-feedback-title">
@@ -998,7 +1006,7 @@ export default function QuestSolver() {
                     >
                       <div className="solver-test-header">
                         <span>
-                          {r.isHidden ? '🔒' : '📋'} {r.description}
+                          <AppIcon name={r.isHidden ? 'lock' : 'listChecks'} size={14} /> {r.description}
                         </span>
                         <span className={`solver-test-status ${r.passed ? 'passed' : 'failed'}`}>
                           {r.passed ? 'PASSED' : 'FAILED'}
@@ -1057,7 +1065,7 @@ export default function QuestSolver() {
                     marginTop: '8px',
                   }}
                 >
-                  <span>✓</span>
+                  <span><AppIcon name="checkCircle" size={14} /></span>
                   <span>
                     Quest status: <strong>Completed</strong>{' '}
                     {alreadyClaimed && '(Reward Claimed)'}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -16,10 +17,10 @@ import {
   Shield,
   Swords,
   Trophy,
-  X,
   Zap,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { AppIcon } from '../components/ui/AppIcon';
 import CodeEditor from '../components/editor/CodeEditor';
 import { pythonChallenges } from '../data/challenges';
 import {
@@ -99,11 +100,11 @@ function ratingChangeStr(change: number): string {
 
 type ArenaSection = 'overview' | 'find-match' | 'history' | 'leaderboard';
 
-const SECTIONS: { key: ArenaSection; label: string; icon: string }[] = [
-  { key: 'overview', label: 'Overview', icon: '📊' },
-  { key: 'find-match', label: 'Find Match', icon: '⚔️' },
-  { key: 'history', label: 'Match History', icon: '📜' },
-  { key: 'leaderboard', label: 'Leaderboard', icon: '🏆' },
+const SECTIONS: { key: ArenaSection; label: string; icon: 'barChart' | 'swords' | 'scroll' | 'trophy' }[] = [
+  { key: 'overview', label: 'Overview', icon: 'barChart' },
+  { key: 'find-match', label: 'Find Match', icon: 'swords' },
+  { key: 'history', label: 'Match History', icon: 'scroll' },
+  { key: 'leaderboard', label: 'Leaderboard', icon: 'trophy' },
 ];
 
 // ─── Matchmaking Flow State Types ──────────────────────────────────
@@ -128,6 +129,7 @@ export default function Arena() {
   const [profile, setProfile] = useState<ArenaProfile | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const profileRequestIdRef = useRef(0);
 
   // Matchmaking state
   const [mmState, setMmState] = useState<MatchmakingFlowState>({ status: 'idle' });
@@ -135,6 +137,7 @@ export default function Arena() {
 
   // ─── Load profile ────────────────────────────────────────────────
   const loadProfile = useCallback(async () => {
+    const requestId = ++profileRequestIdRef.current;
     if (!token) {
       setProfile(null);
       setLoadingProfile(false);
@@ -142,6 +145,7 @@ export default function Arena() {
     }
     setLoadingProfile(true);
     const res = await fetchArenaProfile(token);
+    if (requestId !== profileRequestIdRef.current) return;
     if (res.ok && res.data) setProfile(res.data);
     else setError(res.error);
     setLoadingProfile(false);
@@ -224,7 +228,7 @@ export default function Arena() {
       <div className="arena-page">
         <ArenaHero />
         <div className="arena-auth-prompt">
-          <div className="arena-auth-prompt-icon">🔒</div>
+          <div className="arena-auth-prompt-icon"><AppIcon name="lock" size={24} /></div>
           <h3>Authentication Required</h3>
           <p>Sign in to access the Ranked Coding Arena, search for matches, and compete against other hunters.</p>
           <button type="button" className="arena-btn arena-btn-primary" onClick={openAuthModal}>
@@ -255,7 +259,7 @@ export default function Arena() {
       {error && (
         <div className="arena-alert arena-alert-error" role="alert">
           {error}
-          <button type="button" className="arena-alert-dismiss" onClick={() => setError(null)}>✕</button>
+          <button type="button" className="arena-alert-dismiss" onClick={() => setError(null)}><AppIcon name="x" size={15} /></button>
         </div>
       )}
 
@@ -274,7 +278,7 @@ export default function Arena() {
             }}
             aria-current={section === s.key ? 'page' : undefined}
           >
-            <span className="arena-nav-icon">{s.icon}</span>
+            <span className="arena-nav-icon"><AppIcon name={s.icon} size={17} /></span>
             {s.label}
             {s.key === 'find-match' && mmState.status === 'queued' && (
               <span className="arena-nav-badge-queued">IN QUEUE</span>
@@ -337,7 +341,7 @@ function ArenaHero({ profile, loading }: { profile?: ArenaProfile | null; loadin
       </div>
       {!loading && profile && divInfo && (
         <div className="arena-hero-badge" style={{ borderColor: divInfo.color }}>
-          <span className="arena-hero-badge-icon">{divInfo.icon}</span>
+          <span className="arena-hero-badge-icon"><AppIcon glyph={divInfo.icon} size={20} /></span>
           <div className="arena-hero-badge-info">
             <span className="arena-hero-badge-division" style={{ color: divInfo.color }}>
               {profile.division}
@@ -370,23 +374,47 @@ function OverviewSection({
   const [recentMatches, setRecentMatches] = useState<MatchHistoryEntry[]>([]);
   const [ratingHistory, setRatingHistory] = useState<RatingHistoryEntry[]>([]);
   const [loadingExtra, setLoadingExtra] = useState(true);
+  const [recentMatchesError, setRecentMatchesError] = useState<string | null>(null);
+  const [ratingHistoryError, setRatingHistoryError] = useState<string | null>(null);
+  const [extraRefreshVersion, setExtraRefreshVersion] = useState(0);
+  const extraRequestId = useRef(0);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token) {
+      setLoadingExtra(false);
+      return;
+    }
     let mounted = true;
+    const requestId = ++extraRequestId.current;
+    setLoadingExtra(true);
+    setRecentMatchesError(null);
+    setRatingHistoryError(null);
     async function load() {
       const [histRes, ratingRes] = await Promise.all([
         fetchMatchHistory(token!, 1, 5),
         fetchRatingHistory(token!, 20),
       ]);
-      if (!mounted) return;
-      if (histRes.ok && histRes.data) setRecentMatches(histRes.data.matches);
-      if (ratingRes.ok && ratingRes.data) setRatingHistory(ratingRes.data.entries);
+      if (!mounted || requestId !== extraRequestId.current) return;
+      if (histRes.ok && histRes.data) {
+        setRecentMatches(histRes.data.matches);
+        setRecentMatchesError(null);
+      } else {
+        setRecentMatchesError(histRes.error || 'Unable to load recent matches.');
+      }
+      if (ratingRes.ok && ratingRes.data) {
+        setRatingHistory(ratingRes.data.entries);
+        setRatingHistoryError(null);
+      } else {
+        setRatingHistoryError(ratingRes.error || 'Unable to load rating history.');
+      }
       setLoadingExtra(false);
     }
     void load();
-    return () => { mounted = false; };
-  }, [token]);
+    return () => {
+      mounted = false;
+      if (extraRequestId.current === requestId) extraRequestId.current += 1;
+    };
+  }, [token, extraRefreshVersion]);
 
   if (loading) {
     return (
@@ -400,7 +428,7 @@ function OverviewSection({
   if (!profile) {
     return (
       <div className="arena-empty-state">
-        <span className="arena-empty-icon">⚔️</span>
+        <span className="arena-empty-icon"><AppIcon name="swords" size={24} /></span>
         <h3>Arena Profile Unavailable</h3>
         <p>Could not load your arena profile. Please try again later.</p>
       </div>
@@ -418,14 +446,14 @@ function OverviewSection({
         <div className="arena-active-status-bar queued">
           <div className="arena-active-pulse" />
           <span>You are searching for a ranked match ({formatElapsed(mmState.elapsedSeconds)} elapsed)</span>
-          <button type="button" className="arena-btn arena-btn-small" onClick={onFindMatchClick}>View Queue →</button>
+          <button type="button" className="arena-btn arena-btn-small" onClick={onFindMatchClick}>View Queue <AppIcon name="arrowRight" size={14} /></button>
         </div>
       )}
       {mmState.status === 'ready' && (
         <div className="arena-active-status-bar ready">
-          <span className="arena-status-icon">⚔️</span>
+          <span className="arena-status-icon"><AppIcon name="swords" size={16} /></span>
           <span>Match in progress: #{mmState.match.id.slice(0, 12)}</span>
-          <button type="button" className="arena-btn arena-btn-small arena-btn-primary" onClick={onFindMatchClick}>Return to Match →</button>
+          <button type="button" className="arena-btn arena-btn-small arena-btn-primary" onClick={onFindMatchClick}>Return to Match <AppIcon name="arrowRight" size={14} /></button>
         </div>
       )}
 
@@ -433,7 +461,7 @@ function OverviewSection({
       <div className="arena-player-card">
         <div className="arena-player-card-header">
           <div className="arena-division-emblem" style={{ borderColor: divInfo.color, boxShadow: `0 0 24px ${divInfo.color}33` }}>
-            <span className="arena-division-emblem-icon">{divInfo.icon}</span>
+            <span className="arena-division-emblem-icon"><AppIcon glyph={divInfo.icon} size={20} /></span>
           </div>
           <div className="arena-player-card-info">
             <span className="arena-kicker">Current Division</span>
@@ -452,7 +480,7 @@ function OverviewSection({
               className="arena-btn arena-btn-primary"
               onClick={onFindMatchClick}
             >
-              {mmState.status === 'queued' ? 'View Queue' : mmState.status === 'ready' ? 'Enter Match' : '⚔️ Find Match'}
+              {mmState.status === 'queued' ? 'View Queue' : mmState.status === 'ready' ? 'Enter Match' : <><AppIcon name="swords" size={15} /> Find Match</>}
             </button>
           </div>
         </div>
@@ -460,9 +488,9 @@ function OverviewSection({
         {/* Division Progress */}
         <div className="arena-division-progress">
           <div className="arena-division-progress-labels">
-            <span style={{ color: divInfo.color }}>{divInfo.icon} {divInfo.name}</span>
+            <span style={{ color: divInfo.color }}><AppIcon glyph={divInfo.icon} size={20} /> {divInfo.name}</span>
             {nextDiv ? (
-              <span style={{ color: nextDiv.color }}>{nextDiv.icon} {nextDiv.name} ({nextDiv.minRating} SR)</span>
+              <span style={{ color: nextDiv.color }}><AppIcon glyph={nextDiv.icon} size={14} /> {nextDiv.name} ({nextDiv.minRating} SR)</span>
             ) : (
               <span style={{ color: divInfo.color }}>Maximum Rank</span>
             )}
@@ -478,12 +506,12 @@ function OverviewSection({
 
       {/* Stats Grid */}
       <div className="arena-stats-grid">
-        <StatCard label="Matches" value={profile.matchesPlayed} icon="⚔️" />
-        <StatCard label="Wins" value={profile.wins} icon="✓" accent="var(--color-success)" />
-        <StatCard label="Losses" value={profile.losses} icon="✗" accent="var(--color-danger)" />
-        <StatCard label="Draws" value={profile.draws} icon="=" accent="var(--text-muted)" />
-        <StatCard label="Win Rate" value={`${profile.winRate}%`} icon="📈" accent="var(--accent-cyan)" />
-        <StatCard label="Streak" value={profile.streak >= 0 ? `${profile.streak}W` : `${Math.abs(profile.streak)}L`} icon="🔥" accent="var(--color-warning)" />
+        <StatCard label="Matches" value={profile.matchesPlayed} icon={<AppIcon name="swords" />} />
+        <StatCard label="Wins" value={profile.wins} icon={<AppIcon name="checkCircle" />} accent="var(--color-success)" />
+        <StatCard label="Losses" value={profile.losses} icon={<AppIcon name="circleX" />} accent="var(--color-danger)" />
+        <StatCard label="Draws" value={profile.draws} icon={<AppIcon name="circle" />} accent="var(--text-muted)" />
+        <StatCard label="Win Rate" value={`${profile.winRate}%`} icon={<AppIcon name="trendingUp" />} accent="var(--accent-cyan)" />
+        <StatCard label="Streak" value={profile.streak >= 0 ? `${profile.streak}W` : `${Math.abs(profile.streak)}L`} icon={<AppIcon name="flame" />} accent="var(--color-warning)" />
       </div>
 
       {/* Recent Matches */}
@@ -495,17 +523,25 @@ function OverviewSection({
         <div className="arena-panel-body">
           {loadingExtra ? (
             <div className="arena-loading-inline"><div className="arena-spinner-sm" /> Loading…</div>
+          ) : recentMatchesError && recentMatches.length === 0 ? (
+            <div className="arena-empty-inline" role="alert">
+              <p>{recentMatchesError}</p>
+              <button type="button" className="arena-btn arena-btn-secondary" onClick={() => setExtraRefreshVersion((version) => version + 1)}>Retry</button>
+            </div>
           ) : recentMatches.length === 0 ? (
             <div className="arena-empty-inline">
-              <span>📭</span>
+              <span><AppIcon name="inbox" size={20} /></span>
               <p>No matches yet. Enter the Arena to begin your competitive journey!</p>
             </div>
           ) : (
+            <>
+            {recentMatchesError && <div className="arena-alert arena-alert-error" role="alert">{recentMatchesError}</div>}
             <div className="arena-match-list">
               {recentMatches.map((m) => (
                 <MatchRow key={m.id} match={m} />
               ))}
             </div>
+            </>
           )}
         </div>
       </div>
@@ -519,13 +555,21 @@ function OverviewSection({
         <div className="arena-panel-body">
           {loadingExtra ? (
             <div className="arena-loading-inline"><div className="arena-spinner-sm" /> Loading…</div>
+          ) : ratingHistoryError && ratingHistory.length === 0 ? (
+            <div className="arena-empty-inline" role="alert">
+              <p>{ratingHistoryError}</p>
+              <button type="button" className="arena-btn arena-btn-secondary" onClick={() => setExtraRefreshVersion((version) => version + 1)}>Retry</button>
+            </div>
           ) : ratingHistory.length === 0 ? (
             <div className="arena-empty-inline">
-              <span>📊</span>
+              <span><AppIcon name="barChart" size={20} /></span>
               <p>No rating history yet. Complete your first match to see your progression.</p>
             </div>
           ) : (
-            <RatingChart entries={ratingHistory} />
+            <>
+              {ratingHistoryError && <div className="arena-alert arena-alert-error" role="alert">{ratingHistoryError}</div>}
+              <RatingChart entries={ratingHistory} />
+            </>
           )}
         </div>
       </div>
@@ -891,7 +935,7 @@ function ArenaMatchWorkspace({
         {/* Combatant 1: You */}
         <div className="arena-hud-combatant you">
           <div className="arena-hud-avatar" style={{ borderColor: yourDivInfo.color }}>
-            <span>{match.matchType === 'tournament' ? <Shield size={20} aria-hidden="true" /> : yourDivInfo.icon}</span>
+            <span>{match.matchType === 'tournament' ? <Shield size={20} aria-hidden="true" /> : <AppIcon glyph={yourDivInfo.icon} size={18} />}</span>
           </div>
           <div className="arena-hud-meta">
             <div className="arena-hud-name-row">
@@ -915,7 +959,7 @@ function ArenaMatchWorkspace({
         {/* Center: Timer & Status */}
         <div className="arena-hud-center">
           <div className={`arena-hud-timer-card ${isUrgent ? 'urgent' : ''} ${isExpired ? 'expired' : ''}`}>
-            <span className="arena-hud-timer-icon">{match.matchType === 'tournament' ? <Clock3 size={16} aria-hidden="true" /> : '⏱️'}</span>
+            <span className="arena-hud-timer-icon">{match.matchType === 'tournament' ? <Clock3 size={16} aria-hidden="true" /> : <AppIcon name="timer" size={16} />}</span>
             <span className="arena-hud-timer-digits">{timerStr}</span>
           </div>
           <div className="arena-hud-match-meta">
@@ -955,7 +999,7 @@ function ArenaMatchWorkspace({
             </div>
           </div>
           <div className="arena-hud-avatar" style={{ borderColor: oppDivInfo.color }}>
-            <span>{match.matchType === 'tournament' ? <Shield size={20} aria-hidden="true" /> : oppDivInfo.icon}</span>
+            <span>{match.matchType === 'tournament' ? <Shield size={20} aria-hidden="true" /> : <AppIcon glyph={oppDivInfo.icon} size={18} />}</span>
           </div>
 
           <div className="arena-hud-actions">
@@ -976,7 +1020,7 @@ function ArenaMatchWorkspace({
                 onClick={() => setShowCancelConfirm(true)}
                 title="Cancel Untouched Match (No rating penalty)"
               >
-                {match.matchType === 'tournament' ? <><X size={15} aria-hidden="true" /> Cancel Match</> : '✕ Cancel Match'}
+                <><AppIcon name="x" size={15} /> Cancel Match</>
               </button>
             )}
             {!isConcluded && (
@@ -986,7 +1030,7 @@ function ArenaMatchWorkspace({
                 onClick={() => setShowForfeitConfirm(true)}
                 title="Surrender Duel"
               >
-                {match.matchType === 'tournament' ? <><Flag size={15} aria-hidden="true" /> Forfeit</> : '🏳️ Forfeit'}
+                {match.matchType === 'tournament' ? <><Flag size={15} aria-hidden="true" /> Forfeit</> : <><AppIcon name="flag" size={15} /> Forfeit</>}
               </button>
             )}
           </div>
@@ -1005,21 +1049,21 @@ function ArenaMatchWorkspace({
               className={`arena-tab-btn ${leftTab === 'problem' ? 'active' : ''}`}
               onClick={() => setLeftTab('problem')}
             >
-              {match.matchType === 'tournament' ? <><BookOpenText size={15} aria-hidden="true" /> Problem Statement</> : '📜 Problem Statement'}
+              {match.matchType === 'tournament' ? <><BookOpenText size={15} aria-hidden="true" /> Problem Statement</> : <><AppIcon name="scroll" size={15} /> Problem Statement</>}
             </button>
             <button
               type="button"
               className={`arena-tab-btn ${leftTab === 'samples' ? 'active' : ''}`}
               onClick={() => setLeftTab('samples')}
             >
-              {match.matchType === 'tournament' ? <><FlaskConical size={15} aria-hidden="true" /> Sample Tests ({match.challenge.sampleTests?.length || 0})</> : `🧪 Sample Tests (${match.challenge.sampleTests?.length || 0})`}
+              {match.matchType === 'tournament' ? <><FlaskConical size={15} aria-hidden="true" /> Sample Tests ({match.challenge.sampleTests?.length || 0})</> : <><AppIcon name="flask" size={15} /> Sample Tests ({match.challenge.sampleTests?.length || 0})</>}
             </button>
             <button
               type="button"
               className={`arena-tab-btn ${leftTab === 'requirements' ? 'active' : ''}`}
               onClick={() => setLeftTab('requirements')}
             >
-              {match.matchType === 'tournament' ? <><Settings2 size={15} aria-hidden="true" /> Constraints</> : '⚙️ Constraints'}
+              {match.matchType === 'tournament' ? <><Settings2 size={15} aria-hidden="true" /> Constraints</> : <><AppIcon name="settings" size={15} /> Constraints</>}
             </button>
           </div>
 
@@ -1038,7 +1082,7 @@ function ArenaMatchWorkspace({
                 {/* Lore / Story intro if present */}
                 {challengeInfo?.storyIntro && (
                   <div className="arena-story-callout">
-                    <div className="arena-story-icon">{match.matchType === 'tournament' ? <Swords size={19} aria-hidden="true" /> : '⚔️'}</div>
+                    <div className="arena-story-icon">{match.matchType === 'tournament' ? <Swords size={19} aria-hidden="true" /> : <AppIcon name="swords" size={19} />}</div>
                     <blockquote className="arena-story-text">{challengeInfo.storyIntro}</blockquote>
                   </div>
                 )}
@@ -1113,7 +1157,7 @@ function ArenaMatchWorkspace({
                     ))
                   ) : (
                     <div className="arena-empty-inline">
-                      <span>{match.matchType === 'tournament' ? <FlaskConical size={17} aria-hidden="true" /> : '🧪'}</span>
+                      <span>{match.matchType === 'tournament' ? <FlaskConical size={17} aria-hidden="true" /> : <AppIcon name="flask" size={17} />}</span>
                       <p>No sample test cases defined for this challenge.</p>
                     </div>
                   )}
@@ -1168,7 +1212,7 @@ function ArenaMatchWorkspace({
                 title="Reset to starter template"
                 disabled={isEditorLocked}
               >
-                ↺ Reset
+                <AppIcon name="reset" size={14} /> Reset
               </button>
 
               <button
@@ -1183,7 +1227,7 @@ function ArenaMatchWorkspace({
                     <div className="arena-spinner-xs" /> Running Tests…
                   </>
                 ) : (
-                  match.matchType === 'tournament' ? <><Play size={15} aria-hidden="true" /> Run Sample Tests</> : '▶ Run Sample Tests'
+                  match.matchType === 'tournament' ? <><Play size={15} aria-hidden="true" /> Run Sample Tests</> : <><AppIcon name="play" size={15} /> Run Sample Tests</>
                 )}
               </button>
 
@@ -1199,7 +1243,7 @@ function ArenaMatchWorkspace({
                     <div className="arena-spinner-xs" /> Submitting…
                   </>
                 ) : (
-                  match.matchType === 'tournament' ? <><Rocket size={15} aria-hidden="true" /> Submit Solution</> : '🚀 Submit Solution'
+                  match.matchType === 'tournament' ? <><Rocket size={15} aria-hidden="true" /> Submit Solution</> : <><AppIcon name="trendingUp" size={15} /> Submit Solution</>
                 )}
               </button>
             </div>
@@ -1217,7 +1261,7 @@ function ArenaMatchWorkspace({
 
             {isEditorLocked && (
               <div className="arena-editor-lock-banner">
-                <span className="arena-lock-icon">{match.matchType === 'tournament' ? <LockKeyhole size={15} aria-hidden="true" /> : '🔒'}</span>
+                <span className="arena-lock-icon">{match.matchType === 'tournament' ? <LockKeyhole size={15} aria-hidden="true" /> : <AppIcon name="lock" size={15} />}</span>
                 <span>
                   {isPlayerCompleted
                     ? 'Solution finalized — all test cases successfully passed!'
@@ -1271,7 +1315,7 @@ function ArenaMatchWorkspace({
 
               {sampleRunResult?.durationMs !== undefined && (
                 <span className="arena-execution-time">
-                  {match.matchType === 'tournament' ? <Zap size={14} aria-hidden="true" /> : '⚡'} {sampleRunResult.durationMs}ms
+                  {match.matchType === 'tournament' ? <Zap size={14} aria-hidden="true" /> : <AppIcon name="zap" size={14} />} {sampleRunResult.durationMs}ms
                 </span>
               )}
             </div>
@@ -1288,7 +1332,7 @@ function ArenaMatchWorkspace({
                   ) : sampleRunResult ? (
                     <div className="arena-test-results-container">
                       <div className={`arena-run-summary-banner ${sampleRunResult.allPassed ? 'success' : 'failure'}`}>
-                        <span>{sampleRunResult.allPassed ? '✓ ALL SAMPLE TESTS PASSED' : '✗ SAMPLE TESTS FAILED'}</span>
+                        <span><AppIcon name={sampleRunResult.allPassed ? 'checkCircle' : 'circleX'} size={15} /> {sampleRunResult.allPassed ? 'ALL SAMPLE TESTS PASSED' : 'SAMPLE TESTS FAILED'}</span>
                         <span>
                           {sampleRunResult.passedCount} of {sampleRunResult.totalCount} tests passed
                         </span>
@@ -1340,7 +1384,7 @@ function ArenaMatchWorkspace({
                     </div>
                   ) : (
                     <div className="arena-results-empty">
-                      <span>{match.matchType === 'tournament' ? <Play size={17} aria-hidden="true" /> : '▶️'}</span>
+                      <span>{match.matchType === 'tournament' ? <Play size={17} aria-hidden="true" /> : <AppIcon name="play" size={17} />}</span>
                       <p>Run sample tests to verify your algorithm against visible cases.</p>
                     </div>
                   )}
@@ -1361,7 +1405,7 @@ function ArenaMatchWorkspace({
                         <div className="arena-sub-banner-icon">
                           {match.matchType === 'tournament'
                             ? submitResult.allPassed ? <Trophy size={19} aria-hidden="true" /> : <AlertTriangle size={19} aria-hidden="true" />
-                            : submitResult.allPassed ? '🏆' : '⚠️'}
+                            : submitResult.allPassed ? <AppIcon name="trophy" size={19} /> : <AppIcon name="alertTriangle" size={19} />}
                         </div>
                         <div>
                           <h4>
@@ -1405,7 +1449,7 @@ function ArenaMatchWorkspace({
                     </div>
                   ) : (
                     <div className="arena-results-empty">
-                      <span>{match.matchType === 'tournament' ? <Rocket size={17} aria-hidden="true" /> : '🚀'}</span>
+                      <span>{match.matchType === 'tournament' ? <Rocket size={17} aria-hidden="true" /> : <AppIcon name="trendingUp" size={17} />}</span>
                       <p>No official submission made yet. Submit when ready to test against full criteria.</p>
                     </div>
                   )}
@@ -1422,7 +1466,7 @@ function ArenaMatchWorkspace({
                     </div>
                   ) : (
                     <div className="arena-results-empty">
-                      <span>{match.matchType === 'tournament' ? <Laptop size={17} aria-hidden="true" /> : '💻'}</span>
+                      <span>{match.matchType === 'tournament' ? <Laptop size={17} aria-hidden="true" /> : <AppIcon name="laptop" size={17} />}</span>
                       <p>No stdout printed. Use print() in Python to inspect internal variables.</p>
                     </div>
                   )}
@@ -1439,7 +1483,7 @@ function ArenaMatchWorkspace({
       {showForfeitConfirm && (
         <div className="arena-modal-backdrop animate-fadeIn" role="dialog" aria-modal="true" aria-labelledby="forfeit-title" aria-describedby="forfeit-description">
           <div className="arena-modal-card">
-            <div className="arena-modal-icon-badge danger">{match.matchType === 'tournament' ? <AlertTriangle size={20} aria-hidden="true" /> : '⚠️'}</div>
+            <div className="arena-modal-icon-badge danger">{match.matchType === 'tournament' ? <AlertTriangle size={20} aria-hidden="true" /> : <AppIcon name="alertTriangle" size={19} />}</div>
             <h3 id="forfeit-title">Surrender Duel?</h3>
             <p id="forfeit-description">
               Forfeiting will immediately concede victory to your opponent.
@@ -1473,7 +1517,7 @@ function ArenaMatchWorkspace({
       {showCancelConfirm && (
         <div className="arena-modal-backdrop animate-fadeIn" role="dialog" aria-modal="true" aria-labelledby="cancel-match-title" aria-describedby="cancel-match-description">
           <div className="arena-modal-card">
-            <div className="arena-modal-icon-badge warning">{match.matchType === 'tournament' ? <X size={20} aria-hidden="true" /> : '✕'}</div>
+            <div className="arena-modal-icon-badge warning"><AppIcon name="x" size={20} /></div>
             <h3 id="cancel-match-title">Cancel Untouched Match?</h3>
             <p id="cancel-match-description">
               This duel has not started yet. Cancelling will safely close this match session
@@ -1571,7 +1615,7 @@ function ArenaMatchWorkspace({
               ) : (
                 <div className="arena-rating-transition-row">
                   <span className="arena-res-rating before">{resultRatingBefore} SR</span>
-                  <span className="arena-res-arrow">➔</span>
+                  <span className="arena-res-arrow"><AppIcon name="arrowRight" size={18} /></span>
                   <span className="arena-res-rating after">{resultRatingAfter} SR</span>
                   <span className={`arena-res-delta ${resultRatingDelta >= 0 ? 'positive' : 'negative'}`}>
                     ({resultRatingDelta >= 0 ? `+${resultRatingDelta}` : resultRatingDelta} SR)
@@ -1581,7 +1625,7 @@ function ArenaMatchWorkspace({
 
               {hasDivisionChanged && (
                 <div className="arena-res-division-alert">
-                  {match.matchType === 'tournament' ? <Medal size={16} aria-hidden="true" /> : <span>🎖️</span>}
+                  {match.matchType === 'tournament' ? <Medal size={16} aria-hidden="true" /> : <AppIcon name="medal" size={16} />}
                   <strong>
                     {resultRatingDelta > 0
                       ? `PROMOTED TO ${divAfter.toUpperCase()} DIVISION!`
@@ -1597,12 +1641,12 @@ function ArenaMatchWorkspace({
               <div className="arena-result-rewards-chips">
                 {matchResult.rewards.hunterXp > 0 && (
                   <div className="arena-res-reward-chip">
-                    <span className="arena-reward-chip-icon">{match.matchType === 'tournament' ? <Zap size={15} aria-hidden="true" /> : '⚡'}</span>
+                    <span className="arena-reward-chip-icon">{match.matchType === 'tournament' ? <Zap size={15} aria-hidden="true" /> : <AppIcon name="zap" size={14} />}</span>
                     <span>+{matchResult.rewards.hunterXp} Hunter XP</span>
                   </div>
                 )}
                 {matchResult.rewards.seasonXp > 0 && <div className="arena-res-reward-chip">
-                  <span className="arena-reward-chip-icon">{match.matchType === 'tournament' ? <Trophy size={15} aria-hidden="true" /> : '🏆'}</span>
+                  <span className="arena-reward-chip-icon">{match.matchType === 'tournament' ? <Trophy size={15} aria-hidden="true" /> : <AppIcon name="trophy" size={19} />}</span>
                   <span>+{matchResult.rewards.seasonXp} Season XP</span>
                 </div>}
               </div>
@@ -1709,6 +1753,7 @@ function FindMatchSection({
     }
 
     const queuedAtIso = mmState.queuedAt;
+    let pollInFlight = false;
 
     // 1. Elapsed timer tick
     timerIntervalRef.current = window.setInterval(() => {
@@ -1720,7 +1765,9 @@ function FindMatchSection({
     }, 1000);
 
     // 2. Poll server queue status every 2000ms
-    pollIntervalRef.current = window.setInterval(async () => {
+    const pollQueue = async () => {
+      if (pollInFlight) return;
+      pollInFlight = true;
       try {
         const res = await fetchQueueStatus(token);
         if (!res.ok || !res.data) {
@@ -1766,8 +1813,11 @@ function FindMatchSection({
         }
       } catch (err) {
         setQueuePollError(err instanceof Error ? err.message : 'Network error while checking matchmaking.');
+      } finally {
+        pollInFlight = false;
       }
-    }, 2000);
+    };
+    pollIntervalRef.current = window.setInterval(() => { void pollQueue(); }, 2000);
 
     return () => {
       stopPolling();
@@ -1934,7 +1984,7 @@ function FindMatchSection({
       {/* ─── State: ERROR ────────────────────────────────────────── */}
       {mmState.status === 'error' && (
         <div className="arena-mm-card error-card">
-          <div className="arena-mm-error-badge">⚠️</div>
+          <div className="arena-mm-error-badge"><AppIcon name="alertTriangle" size={20} /></div>
           <h3>Matchmaking Notice</h3>
           <p className="arena-mm-error-message">{mmState.message}</p>
           <div className="arena-mm-actions">
@@ -1960,7 +2010,7 @@ function FindMatchSection({
             <div className="arena-radar-ring inner" />
             <div className="arena-radar-sweep" />
             <div className="arena-radar-core">
-              <span className="arena-radar-core-icon">⚡</span>
+              <span className="arena-radar-core-icon"><AppIcon name="zap" size={18} /></span>
             </div>
           </div>
 
@@ -1987,7 +2037,7 @@ function FindMatchSection({
             {profile && divInfo && (
               <div className="arena-queued-hunter-chip">
                 <div className="arena-hunter-chip-avatar">
-                  <span>{divInfo.icon}</span>
+                  <span><AppIcon glyph={divInfo.icon} size={20} /></span>
                 </div>
                 <div className="arena-hunter-chip-details">
                   <strong>{username}</strong>
@@ -2033,7 +2083,7 @@ function FindMatchSection({
                   {/* Combatant 1: You */}
                   <div className="arena-combatant-card you">
                     <div className="arena-combatant-emblem" style={{ borderColor: yourDivInfo.color }}>
-                      <span>{yourDivInfo.icon}</span>
+                      <span><AppIcon glyph={yourDivInfo.icon} size={18} /></span>
                     </div>
                     <div className="arena-combatant-info">
                       <span className="arena-combatant-label">YOU</span>
@@ -2054,7 +2104,7 @@ function FindMatchSection({
                   {/* Combatant 2: Confirmed Opponent */}
                   <div className="arena-combatant-card opponent">
                     <div className="arena-combatant-emblem" style={{ borderColor: oppDivInfo.color }}>
-                      <span>{oppDivInfo.icon}</span>
+                      <span><AppIcon glyph={oppDivInfo.icon} size={18} /></span>
                     </div>
                     <div className="arena-combatant-info">
                       <span className="arena-combatant-label">OPPONENT</span>
@@ -2116,7 +2166,7 @@ function FindMatchSection({
                 }
               }}
             >
-              Enter Match Arena Now →
+              Enter Match Arena Now <AppIcon name="arrowRight" size={15} />
             </button>
           </div>
         </div>
@@ -2125,6 +2175,7 @@ function FindMatchSection({
       {/* ─── State: MATCH READY / LIVE CODING WORKSPACE ────────────── */}
       {mmState.status === 'ready' && (
         <ArenaMatchWorkspace
+          key={mmState.match.id}
           initialMatch={mmState.match}
           token={token!}
           onExitMatch={() => {
@@ -2160,7 +2211,7 @@ function FindMatchSection({
             {profile && divInfo && (
               <div className="arena-matchmaking-player">
                 <div className="arena-matchmaking-player-div" style={{ borderColor: divInfo.color, boxShadow: `0 0 16px ${divInfo.color}33` }}>
-                  <span>{divInfo.icon}</span>
+                  <span><AppIcon glyph={divInfo.icon} size={20} /></span>
                 </div>
                 <div className="arena-matchmaking-player-meta">
                   <strong style={{ color: divInfo.color }}>{profile.division} Division</strong>
@@ -2180,7 +2231,7 @@ function FindMatchSection({
                 {isJoining ? (
                   <><div className="arena-spinner-sm" /> Joining Queue…</>
                 ) : (
-                  <>⚔️ Find Match</>
+                  <><AppIcon name="swords" size={15} /> Find Match</>
                 )}
               </button>
             </div>
@@ -2237,7 +2288,7 @@ function FindMatchSection({
                 className={`arena-division-tier ${profile?.division === d.name ? 'current' : ''}`}
                 style={{ '--div-color': d.color } as React.CSSProperties}
               >
-                <span className="arena-tier-icon">{d.icon}</span>
+                <span className="arena-tier-icon"><AppIcon glyph={d.icon} size={16} /></span>
                 <strong>{d.name}</strong>
                 <span className="arena-tier-range">
                   {d.minRating}–{d.maxRating > 9000 ? '∞' : d.maxRating}
@@ -2261,18 +2312,27 @@ function HistorySection({ token }: { token: string | null }) {
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const requestIdRef = useRef(0);
 
   const load = useCallback(async (p: number) => {
-    if (!token) return;
+    if (!token) {
+      setLoading(false);
+      setError('Sign in again to load match history.');
+      return;
+    }
+    const requestId = ++requestIdRef.current;
     setLoading(true);
+    setError(null);
     const res = await fetchMatchHistory(token, p, 10);
-    if (res.ok && res.data) { setHistory(res.data); setError(null); }
+    if (requestId !== requestIdRef.current) return;
+    if (res.ok && res.data) setHistory(res.data);
     else setError(res.error || 'Unable to load match history.');
     setLoading(false);
   }, [token]);
 
   useEffect(() => {
     void load(page);
+    return () => { requestIdRef.current += 1; };
   }, [load, page]);
 
   return (
@@ -2289,7 +2349,7 @@ function HistorySection({ token }: { token: string | null }) {
             <div className="arena-empty-inline" role="alert"><p>{error}</p><button type="button" className="arena-btn arena-btn-secondary" onClick={() => void load(page)}>Retry</button></div>
           ) : !history || history.matches.length === 0 ? (
             <div className="arena-empty-inline">
-              <span>📭</span>
+              <span><AppIcon name="inbox" size={20} /></span>
               <p>No match history yet. Complete your first ranked match to see results here.</p>
             </div>
           ) : (
@@ -2309,7 +2369,7 @@ function HistorySection({ token }: { token: string | null }) {
                     disabled={page <= 1}
                     onClick={() => setPage(page - 1)}
                   >
-                    ← Previous
+                    <AppIcon name="arrowLeft" size={14} /> Previous
                   </button>
                   <span className="arena-pagination-info">
                     Page {history.page} of {history.totalPages}
@@ -2320,7 +2380,7 @@ function HistorySection({ token }: { token: string | null }) {
                     disabled={page >= history.totalPages}
                     onClick={() => setPage(page + 1)}
                   >
-                    Next →
+                    Next <AppIcon name="arrowRight" size={14} />
                   </button>
                 </div>
               )}
@@ -2342,18 +2402,27 @@ function LeaderboardSection({ token }: { token: string | null }) {
   const [page, setPage] = useState(1);
   const [division, setDivision] = useState('all');
   const [loading, setLoading] = useState(true);
+  const requestIdRef = useRef(0);
 
   const load = useCallback(async (p: number, div: string) => {
-    if (!token) return;
+    if (!token) {
+      setLoading(false);
+      setError('Sign in again to load the leaderboard.');
+      return;
+    }
+    const requestId = ++requestIdRef.current;
     setLoading(true);
+    setError(null);
     const res = await fetchArenaLeaderboard(token, p, 25, div);
-    if (res.ok && res.data) { setLb(res.data); setError(null); }
+    if (requestId !== requestIdRef.current) return;
+    if (res.ok && res.data) setLb(res.data);
     else setError(res.error || 'Unable to load leaderboard.');
     setLoading(false);
   }, [token]);
 
   useEffect(() => {
     void load(page, division);
+    return () => { requestIdRef.current += 1; };
   }, [load, page, division]);
 
   return (
@@ -2370,7 +2439,7 @@ function LeaderboardSection({ token }: { token: string | null }) {
             >
               <option value="all">All Divisions</option>
               {DIVISIONS.map((d) => (
-                <option key={d.name} value={d.name}>{d.icon} {d.name}</option>
+                <option key={d.name} value={d.name}>{d.name}</option>
               ))}
             </select>
           </div>
@@ -2382,7 +2451,7 @@ function LeaderboardSection({ token }: { token: string | null }) {
             <div className="arena-empty-inline" role="alert"><p>{error}</p><button type="button" className="arena-btn arena-btn-secondary" onClick={() => void load(page, division)}>Retry</button></div>
           ) : !lb || lb.entries.length === 0 ? (
             <div className="arena-empty-inline">
-              <span>🏆</span>
+              <span><AppIcon name="trophy" size={20} /></span>
               <p>No rankings yet{division !== 'all' ? ` in ${division} division` : ''}. Be the first to compete!</p>
             </div>
           ) : (
@@ -2415,7 +2484,7 @@ function LeaderboardSection({ token }: { token: string | null }) {
                     disabled={page <= 1}
                     onClick={() => setPage(page - 1)}
                   >
-                    ← Previous
+                    <AppIcon name="arrowLeft" size={14} /> Previous
                   </button>
                   <span className="arena-pagination-info">
                     Page {lb.page} of {lb.totalPages}
@@ -2426,7 +2495,7 @@ function LeaderboardSection({ token }: { token: string | null }) {
                     disabled={page >= lb.totalPages}
                     onClick={() => setPage(page + 1)}
                   >
-                    Next →
+                    Next <AppIcon name="arrowRight" size={14} />
                   </button>
                 </div>
               )}
@@ -2450,7 +2519,7 @@ function StatCard({
 }: {
   label: string;
   value: string | number;
-  icon: string;
+  icon: ReactNode;
   accent?: string;
 }) {
   return (
@@ -2474,7 +2543,7 @@ function MatchRow({ match, showDate }: { match: MatchHistoryEntry; showDate?: bo
   return (
     <div className={`arena-match-row ${resultClass}`}>
       <div className={`arena-match-result-badge ${resultClass}`}>
-        {match.result === 'win' ? '✓' : match.result === 'loss' ? '✗' : '='}
+        {match.result === 'win' ? <AppIcon name="checkCircle" size={15} /> : match.result === 'loss' ? <AppIcon name="circleX" size={15} /> : <AppIcon name="circle" size={15} />}
       </div>
       <div className="arena-match-info">
         <div className="arena-match-primary">
@@ -2497,7 +2566,7 @@ function MatchRow({ match, showDate }: { match: MatchHistoryEntry; showDate?: bo
           className="arena-match-spectate-btn"
           title="View match analysis in Spectator mode"
         >
-          👁️
+          <AppIcon name="eye" size={15} />
         </Link>
       </div>}
     </div>
@@ -2522,7 +2591,7 @@ function LeaderboardRow({ entry }: { entry: LeaderboardEntry }) {
       </td>
       <td>
         <span className="arena-lb-division" style={{ color: divInfo.color }}>
-          {divInfo.icon} {entry.division}
+          <AppIcon glyph={divInfo.icon} size={20} /> {entry.division}
         </span>
       </td>
       <td className="arena-lb-rating">{entry.rating}</td>

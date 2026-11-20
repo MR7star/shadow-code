@@ -16,6 +16,7 @@ import { useAuth } from '../context/AuthContext';
 import { useProgression } from '../context/ProgressionContext';
 import { getChallengeById } from '../data/challenges';
 import CodeEditor from '../components/editor/CodeEditor';
+import { AppIcon } from '../components/ui/AppIcon';
 import { Button, Modal, Toast } from '../components/ui';
 import type { Dungeon, DungeonChallenge, DungeonSubmitResult } from '../types';
 import type { QuestDifficulty } from '../types';
@@ -62,7 +63,7 @@ function BossVictoryOverlay({ dungeon, dungeonXpAwarded, onContinue, onBackToDun
   return (
     <Modal open title="Dungeon cleared" onClose={onContinue} className="dungeon-victory-modal">
       <div className="dungeon-victory">
-        <div className="dungeon-victory__icon">👑</div>
+        <div className="dungeon-victory__icon"><AppIcon name="crown" size={26} /></div>
         <h2 className="dungeon-victory__title">Dungeon Cleared!</h2>
         <p className="dungeon-victory__subtitle">{dungeon.name} has been conquered.</p>
         <div className="dungeon-victory__rewards">
@@ -76,14 +77,14 @@ function BossVictoryOverlay({ dungeon, dungeonXpAwarded, onContinue, onBackToDun
             <div className="dungeon-victory__reward">
               <div className="dungeon-victory__reward-label">Title</div>
               <div className="dungeon-victory__reward-value" style={{ fontSize: '0.95rem' }}>
-                🏆 {dungeon.bonusTitle}
+                <AppIcon name="trophy" size={15} /> {dungeon.bonusTitle}
               </div>
             </div>
           )}
         </div>
         <div className="dungeon-victory__actions">
           <Button id="boss-victory-back-dungeons" onClick={onBackToDungeon}>
-            ← All Dungeons
+            <AppIcon name="arrowLeft" size={15} /> All Dungeons
           </Button>
           <Button id="boss-victory-continue" variant="secondary" onClick={onContinue}>
             Close
@@ -117,6 +118,7 @@ export default function DungeonSolver() {
     try { const s = localStorage.getItem(storageKey); if (s) return s; } catch {}
     return challengeMeta?.starterCode || `def ${challengeId?.replace(/-/g, '_')}():\n    pass\n`;
   });
+  const [loadedDraftKey, setLoadedDraftKey] = useState(storageKey);
 
   // Evaluation state
   const [isRunning, setIsRunning] = useState(false);
@@ -132,7 +134,7 @@ export default function DungeonSolver() {
 
   // ── Fetch dungeon ────────────────────────────────────────────────────────
 
-  const fetchDungeon = useCallback(async () => {
+  const fetchDungeon = useCallback(async (signal?: AbortSignal) => {
     if (authLoading) return;
     if (!token) {
       setDungeon(null);
@@ -151,6 +153,7 @@ export default function DungeonSolver() {
     try {
       const res = await fetch(`${API}/api/dungeons/${dungeonId}`, {
         headers: { Authorization: `Bearer ${token}` },
+        signal,
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -158,6 +161,7 @@ export default function DungeonSolver() {
       }
       const data = await res.json();
       const d: Dungeon = data.dungeon;
+      if (signal?.aborted) return;
       setDungeon(d);
       const dc = d.challenges.find((c) => c.id === challengeId) || null;
       setDungeonChallenge(dc);
@@ -165,29 +169,50 @@ export default function DungeonSolver() {
         setDungeonError('This challenge is locked. Complete the previous stage first.');
       }
     } catch (err: any) {
+      if (signal?.aborted) return;
       setDungeonError(err.message || 'Failed to load dungeon.');
     } finally {
-      setDungeonLoading(false);
+      if (!signal?.aborted) setDungeonLoading(false);
     }
   }, [authLoading, token, dungeonId, challengeId]);
 
-  useEffect(() => { fetchDungeon(); }, [fetchDungeon]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchDungeon(controller.signal);
+    return () => controller.abort();
+  }, [fetchDungeon]);
 
   // ── Save draft ───────────────────────────────────────────────────────────
 
   useEffect(() => {
+    if (loadedDraftKey !== storageKey) return;
     try { localStorage.setItem(storageKey, code); } catch {}
-  }, [code, storageKey]);
+  }, [code, storageKey, loadedDraftKey]);
+
+  useEffect(() => {
+    if (loadedDraftKey === storageKey) return;
+    let restoredCode = challengeMeta?.starterCode || `def ${challengeId?.replace(/-/g, '_')}():\n    pass\n`;
+    try {
+      const saved = localStorage.getItem(storageKey);
+      if (saved !== null) restoredCode = saved;
+    } catch {}
+    setCode(restoredCode);
+    setEvalResult(null);
+    setActiveTab('tests');
+    setRevealedHints([]);
+    setLoadedDraftKey(storageKey);
+  }, [storageKey, loadedDraftKey, challengeMeta, challengeId]);
 
   // ── Runner health ────────────────────────────────────────────────────────
 
-  const checkRunnerHealth = useCallback(async () => {
+  const checkRunnerHealth = useCallback(async (): Promise<boolean> => {
     setRunnerStatus('checking');
     try {
       const res = await fetch(`${API}/api/health`);
-      if (res.ok) { setRunnerStatus('online'); return; }
+      if (res.ok) { setRunnerStatus('online'); return true; }
     } catch {}
     setRunnerStatus('offline');
+    return false;
   }, []);
 
   useEffect(() => { checkRunnerHealth(); }, [checkRunnerHealth]);
@@ -196,7 +221,7 @@ export default function DungeonSolver() {
 
   const handleRunCode = useCallback(async () => {
     if (!isAuthenticated) { openAuthModal(); return; }
-    if (runnerStatus === 'offline') { await checkRunnerHealth(); return; }
+    if (runnerStatus === 'offline' && !(await checkRunnerHealth())) return;
 
     setIsRunning(true);
     setEvalResult(null);
@@ -225,7 +250,7 @@ export default function DungeonSolver() {
 
   const handleSubmit = useCallback(async () => {
     if (!isAuthenticated) { openAuthModal(); return; }
-    if (runnerStatus === 'offline') { await checkRunnerHealth(); return; }
+    if (runnerStatus === 'offline' && !(await checkRunnerHealth())) return;
 
     setIsRunning(true);
     setEvalResult(null);
@@ -275,7 +300,7 @@ export default function DungeonSolver() {
     if (window.confirm('Reset code to starter template?')) {
       const starter = challengeMeta?.starterCode || `def solve():\n    pass\n`;
       setCode(starter);
-      localStorage.removeItem(storageKey);
+      try { localStorage.removeItem(storageKey); } catch {}
       setEvalResult(null);
     }
   }, [challengeMeta, storageKey]);
@@ -299,7 +324,7 @@ export default function DungeonSolver() {
       <div className="dungeons-error" role="status">
         <p>Sign in to access this dungeon challenge.</p>
         <button onClick={openAuthModal}>Sign in</button>
-        <button onClick={() => navigate('/dungeons')}>← Back to Dungeons</button>
+        <button onClick={() => navigate('/dungeons')}><AppIcon name="arrowLeft" size={15} /> Back to Dungeons</button>
       </div>
     );
   }
@@ -307,8 +332,8 @@ export default function DungeonSolver() {
   if (dungeonError) {
     return (
       <div className="dungeons-error" role="alert">
-        <p>⚠ {dungeonError}</p>
-        <button onClick={() => navigate(`/dungeons`)}>← Back to Dungeons</button>
+        <p><AppIcon name="alertTriangle" size={15} /> {dungeonError}</p>
+        <button onClick={() => navigate(`/dungeons`)}><AppIcon name="arrowLeft" size={15} /> Back to Dungeons</button>
       </div>
     );
   }
@@ -317,7 +342,7 @@ export default function DungeonSolver() {
     return (
       <div className="dungeons-error">
         <p>Challenge not found.</p>
-        <button onClick={() => navigate('/dungeons')}>← Back to Dungeons</button>
+        <button onClick={() => navigate('/dungeons')}><AppIcon name="arrowLeft" size={15} /> Back to Dungeons</button>
       </div>
     );
   }
@@ -348,7 +373,7 @@ export default function DungeonSolver() {
             padding: 0, display: 'flex', alignItems: 'center', gap: '0.3rem',
           }}
         >
-          ← {dungeon.name}
+          <AppIcon name="arrowLeft" size={15} /> {dungeon.name}
         </button>
       </div>
 
@@ -370,7 +395,7 @@ export default function DungeonSolver() {
                   letterSpacing: '0.05em',
                 }}
               >
-                {isBoss ? '⚠ BOSS ENCOUNTER' : `STAGE ${dungeonChallenge.order}`}
+                {isBoss ? <><AppIcon name="alertTriangle" size={14} /> BOSS ENCOUNTER</> : `STAGE ${dungeonChallenge.order}`}
               </span>
               <span
                 className="qs-difficulty"
@@ -473,7 +498,7 @@ export default function DungeonSolver() {
                         color: '#c4b5fd',
                       }}
                     >
-                      💡 {hint}
+                      <AppIcon name="lightbulb" size={14} /> {hint}
                     </div>
                   ) : (
                     <button
@@ -491,7 +516,7 @@ export default function DungeonSolver() {
                         textAlign: 'left',
                       }}
                     >
-                      🔍 Reveal Hint {i + 1}
+                      <AppIcon name="search" size={14} /> Reveal Hint {i + 1}
                     </button>
                   )}
                 </div>
@@ -513,7 +538,7 @@ export default function DungeonSolver() {
               className={`qs-runner-status qs-runner-status--${runnerStatus}`}
               role="status"
             >
-              {runnerStatus === 'checking' ? '⟳ Connecting to Python runner…' : '⚠ Python runner offline — start it with `node server/runner.mjs`'}
+              {runnerStatus === 'checking' ? <><AppIcon name="refresh" size={14} /> Connecting to Python runner…</> : <><AppIcon name="alertTriangle" size={14} /> Python runner offline — start it with `node server/runner.mjs`</>}
             </div>
           )}
 
@@ -529,7 +554,7 @@ export default function DungeonSolver() {
                   disabled={isRunning}
                   aria-label="Reset code to starter template"
                 >
-                  ↺ Reset
+                  <AppIcon name="reset" size={14} /> Reset
                 </button>
               </div>
             </div>
@@ -551,7 +576,7 @@ export default function DungeonSolver() {
               disabled={isRunning || runnerStatus === 'offline'}
               aria-label="Run code against sample tests"
             >
-              {isRunning ? '⟳ Running…' : '▶ Run Code'}
+              {isRunning ? <><AppIcon name="refresh" size={14} /> Running…</> : <><AppIcon name="play" size={14} /> Run Code</>}
             </button>
             <button
               id="dungeon-submit-code"
@@ -565,8 +590,8 @@ export default function DungeonSolver() {
               } : undefined}
             >
               {isRunning
-                ? (isBoss ? '⟳ Fighting Boss…' : '⟳ Submitting…')
-                : (isBoss ? '⚔ Fight Boss' : '⬆ Submit Solution')}
+                ? <><AppIcon name="refresh" size={14} /> {isBoss ? 'Fighting Boss…' : 'Submitting…'}</>
+                : isBoss ? <><AppIcon name="swords" size={14} /> Fight Boss</> : <><AppIcon name="arrowUp" size={14} /> Submit Solution</>}
             </button>
           </div>
 
@@ -583,7 +608,7 @@ export default function DungeonSolver() {
                 color: '#22c55e',
               }}
             >
-              ✓ You already completed this stage!
+              <AppIcon name="checkCircle" size={15} /> You already completed this stage!
             </div>
           )}
 
@@ -622,14 +647,14 @@ export default function DungeonSolver() {
                 <div className="qs-success-banner">
                   {evalResult.isSubmission ? (
                     <>
-                      {isBoss ? '💀 Boss Defeated! ' : '✓ Stage Complete! '}
+                      {isBoss ? <><AppIcon name="skull" size={16} /> Boss Defeated! </> : <><AppIcon name="checkCircle" size={16} /> Stage Complete! </>}
                       {evalResult.xpReward > 0 && !evalResult.isDuplicate && (
                         <span>+{evalResult.xpReward} XP awarded.</span>
                       )}
                       {evalResult.isDuplicate && <span>Already completed — no duplicate XP.</span>}
                     </>
                   ) : (
-                    '✓ All sample tests passed! Submit to run hidden tests.'
+                    'All sample tests passed! Submit to run hidden tests.'
                   )}
                 </div>
               )}
@@ -641,7 +666,7 @@ export default function DungeonSolver() {
                     <div key={r.index} className={`qs-test-result qs-test-result--${r.passed ? 'pass' : 'fail'}`}>
                       <div className="qs-tr-header">
                         <span className={`qs-tr-badge qs-tr-badge--${r.passed ? 'pass' : 'fail'}`}>
-                          {r.passed ? '✓' : '✗'}
+                          <AppIcon name={r.passed ? 'checkCircle' : 'circleX'} size={14} />
                         </span>
                         <span className="qs-tr-desc">{r.description}</span>
                         {r.executionTimeMs !== undefined && (
